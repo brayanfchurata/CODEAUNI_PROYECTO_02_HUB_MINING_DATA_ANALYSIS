@@ -35,18 +35,34 @@ def clean_dataframe(df: pd.DataFrame, options: dict | None = None) -> tuple[pd.D
 
     if options.get("convert_numeric", False):
         for col in df.columns:
-            if df[col].dtype == "object":
-                series = df[col].astype(str).str.strip()
-                cleaned = (
-                    series.str.replace("\u00a0", "", regex=False)
-                    .str.replace("%", "", regex=False)
-                    .str.replace(r"(?<=\d),(?=\d)", ".", regex=True)
-                )
-                numeric = pd.to_numeric(cleaned, errors="coerce")
-                if numeric.notna().mean() >= 0.7:
-                    df[col] = numeric
-                    actions["numeric_converted"].append(col)
+            try:
+                if df[col].dtype == "object":
+                    series = df[col].dropna()
+                    if len(series) > 1500:
+                        series = series.sample(1500, random_state=42)
 
+                    series = series.astype(str).str.strip()
+
+                    cleaned_sample = (
+                        series.str.replace("\u00a0", "", regex=False)
+                        .str.replace("%", "", regex=False)
+                        .str.replace(",", ".", regex=False)
+                    )
+
+                    numeric_sample = pd.to_numeric(cleaned_sample, errors="coerce")
+                    ratio = numeric_sample.notna().mean()
+
+                    if ratio >= 0.7:
+                        full_series = df[col].astype(str).str.strip()
+                        full_cleaned = (
+                            full_series.str.replace("\u00a0", "", regex=False)
+                            .str.replace("%", "", regex=False)
+                            .str.replace(",", ".", regex=False)
+                        )
+                        df[col] = pd.to_numeric(full_cleaned, errors="coerce")
+                        actions["numeric_converted"].append(col)
+            except Exception:
+                continue
     if options.get("convert_dates", False):
         for col in df.columns:
             lower = col.lower()

@@ -12,8 +12,21 @@ THEMES = {
         "warning": "#d97706",
         "danger": "#dc2626",
         "accent": "#38bdf8",
+
         "chart_bg": "#1e293b",
         "chart_grid": "#475569",
+
+        # nuevas
+        "chart_text": "#e2e8f0",
+        "chart_axis": "#94a3b8",
+        "card": "#1e293b",
+        "card_alt": "#243244",
+
+        "series_1": "#3b82f6",
+        "series_2": "#f59e0b",
+        "series_3": "#22c55e",
+        "series_4": "#a78bfa",
+        "series_5": "#ef4444",
     },
     "Emerald": {
         "bg": "#07130f",
@@ -28,8 +41,20 @@ THEMES = {
         "warning": "#f59e0b",
         "danger": "#ef4444",
         "accent": "#34d399",
+
         "chart_bg": "#163328",
         "chart_grid": "#3f6b58",
+
+        "chart_text": "#ecfdf5",
+        "chart_axis": "#a7f3d0",
+        "card": "#163328",
+        "card_alt": "#1c4032",
+
+        "series_1": "#10b981",
+        "series_2": "#f59e0b",
+        "series_3": "#22c55e",
+        "series_4": "#60a5fa",
+        "series_5": "#ef4444",
     },
     "Copper": {
         "bg": "#16110d",
@@ -44,8 +69,20 @@ THEMES = {
         "warning": "#f59e0b",
         "danger": "#dc2626",
         "accent": "#fb923c",
+
         "chart_bg": "#332419",
         "chart_grid": "#7c5b45",
+
+        "chart_text": "#fff7ed",
+        "chart_axis": "#fdba74",
+        "card": "#332419",
+        "card_alt": "#3d2c20",
+
+        "series_1": "#c2410c",
+        "series_2": "#fb923c",
+        "series_3": "#84cc16",
+        "series_4": "#38bdf8",
+        "series_5": "#ef4444",
     },
     "Slate": {
         "bg": "#111827",
@@ -60,8 +97,20 @@ THEMES = {
         "warning": "#f59e0b",
         "danger": "#ef4444",
         "accent": "#a78bfa",
+
         "chart_bg": "#374151",
         "chart_grid": "#6b7280",
+
+        "chart_text": "#f9fafb",
+        "chart_axis": "#d1d5db",
+        "card": "#374151",
+        "card_alt": "#425066",
+
+        "series_1": "#6366f1",
+        "series_2": "#f59e0b",
+        "series_3": "#22c55e",
+        "series_4": "#06b6d4",
+        "series_5": "#ef4444",
     },
 }
 

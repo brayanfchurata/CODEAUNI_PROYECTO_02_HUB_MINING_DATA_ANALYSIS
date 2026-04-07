@@ -5,7 +5,9 @@ from tkinter import filedialog, messagebox, ttk
 import customtkinter as ctk
 import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
+from app.ui.chart_theme import create_figure, style_axes, style_legend 
+#from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+#from matplotlib.figure import Figure
 
 from app.core.constants import MODULE_CONFIG
 from app.services.file_loader import load_file
@@ -615,8 +617,8 @@ class GeologyView(ctk.CTkScrollableFrame):
     def clear_chart_frame(self, frame):
         for child in frame.winfo_children():
             child.destroy()
-
-    def style_axes(self, fig, ax):
+#Cambiando ejes de cambio 
+    """def style_axes(self, fig, ax):
         palette = self.get_palette()
         fig.patch.set_facecolor(palette["chart_bg"])
         ax.set_facecolor(palette["chart_bg"])
@@ -629,7 +631,7 @@ class GeologyView(ctk.CTkScrollableFrame):
         ax.tick_params(axis="y", colors=palette["text"])
         ax.title.set_color(palette["text"])
         ax.xaxis.label.set_color(palette["text"])
-        ax.yaxis.label.set_color(palette["text"])
+        ax.yaxis.label.set_color(palette["text"])"""
 
     def render_all_charts(self):
         self.render_scatter_chart()
@@ -644,13 +646,25 @@ class GeologyView(ctk.CTkScrollableFrame):
         y = self.y_var.get()
         palette = self.get_palette()
 
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
+        style_axes(fig, ax, palette)
+
+        """fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        ax = fig.add_subplot(111)
+        self.style_axes(fig, ax)"""
 
         if x in df.columns and y in df.columns:
             sample = df[[x, y]].dropna().head(1500)
-            ax.scatter(sample[x], sample[y], s=18, alpha=0.7, color=palette["accent"], edgecolors="none")
+            ax.scatter(
+                sample[x],
+                sample[y],
+                s=18,
+                alpha=0.72,
+                color=palette["series_1"],
+                edgecolors="none"
+                )
+            #ax.scatter(sample[x], sample[y], s=18, alpha=0.7, color=palette["accent"], edgecolors="none")
             ax.set_title(f"{x} vs {y}")
             ax.set_xlabel(x)
             ax.set_ylabel(y)
@@ -665,15 +679,41 @@ class GeologyView(ctk.CTkScrollableFrame):
         metric = self.metric_var.get()
         palette = self.get_palette()
 
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
+        style_axes(fig, ax, palette)
+
+        """fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        ax = fig.add_subplot(111)
+        self.style_axes(fig, ax)"""
 
         if {"rock_name", metric}.issubset(df.columns):
             common = df["rock_name"].astype(str).value_counts().head(8).index
             subset = df[df["rock_name"].astype(str).isin(common)]
             data = [subset[subset["rock_name"].astype(str) == r][metric].dropna().values for r in common]
+            
             box = ax.boxplot(data, labels=list(common), patch_artist=True)
+
+            for patch in box["boxes"]:
+                patch.set_facecolor(palette["series_1"])
+                patch.set_alpha(0.70)
+                patch.set_edgecolor(palette["chart_axis"])
+
+            for median in box["medians"]:
+                median.set_color(palette["series_2"])
+
+            for whisker in box["whiskers"]:
+                whisker.set_color(palette["chart_axis"])
+
+            for cap in box["caps"]:
+                cap.set_color(palette["chart_axis"])
+
+            ax.tick_params(axis="x")
+            for label in ax.get_xticklabels():
+                label.set_rotation(30)
+                label.set_ha("right")
+            
+            """box = ax.boxplot(data, labels=list(common), patch_artist=True)
             for patch in box["boxes"]:
                 patch.set_facecolor(palette["primary"])
                 patch.set_alpha(0.75)
@@ -682,7 +722,7 @@ class GeologyView(ctk.CTkScrollableFrame):
                 median.set_color(palette["text"])
             ax.set_title(f"Distribución de {metric} por litología")
             ax.set_ylabel(metric)
-            ax.tick_params(axis="x", rotation=30)
+            ax.tick_params(axis="x", rotation=30)"""
 
         canvas = FigureCanvasTkAgg(fig, master=self.box_frame)
         canvas.draw()
@@ -694,9 +734,13 @@ class GeologyView(ctk.CTkScrollableFrame):
         metric = self.metric_var.get()
         palette = self.get_palette()
 
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
+        style_axes(fig, ax, palette)
+
+        """fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        ax = fig.add_subplot(111)
+        self.style_axes(fig, ax)"""
 
         if {"rock_name", metric}.issubset(df.columns):
             top_n = self.safe_top_n()
@@ -715,14 +759,19 @@ class GeologyView(ctk.CTkScrollableFrame):
         df = self.get_filtered_df()
         palette = self.get_palette()
 
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
+        style_axes(fig, ax, palette)
+
+        """fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        ax = fig.add_subplot(111)
+        self.style_axes(fig, ax)"""
 
         numeric_cols = self.numeric_columns(df)
         if len(numeric_cols) >= 2:
             corr = df[numeric_cols].corr(numeric_only=True)
-            img = ax.imshow(corr.values, aspect="auto")
+            img = ax.imshow(corr.values, aspect="auto", cmap="YlGnBu")
+            #img = ax.imshow(corr.values, aspect="auto")
             ax.set_title("Correlación geoquímica")
             ax.set_xticks(range(len(corr.columns)))
             ax.set_yticks(range(len(corr.columns)))
