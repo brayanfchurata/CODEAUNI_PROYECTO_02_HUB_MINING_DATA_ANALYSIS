@@ -18,5 +18,19 @@ def style_axes(fig, ax, palette):
     ax.tick_params(axis="y", colors=palette["chart_text"], labelsize=9)
 
     ax.title.set_color(palette["chart_text"])
+    ax.title.set_fontsize(13)
+
     ax.xaxis.label.set_color(palette["chart_text"])
     ax.yaxis.label.set_color(palette["chart_text"])
+
+
+def style_legend(ax, palette):
+    legend = ax.get_legend()
+    if legend:
+        frame = legend.get_frame()
+        frame.set_facecolor(palette["panel"])
+        frame.set_edgecolor(palette["border"])
+        frame.set_alpha(0.95)
+
+        for text in legend.get_texts():
+            text.set_color(palette["chart_text"])

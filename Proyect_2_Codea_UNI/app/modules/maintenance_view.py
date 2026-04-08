@@ -4,8 +4,11 @@ from tkinter import filedialog, messagebox, ttk
 
 import customtkinter as ctk
 import pandas as pd
+#from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+#from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
+from app.ui.chart_theme import create_figure, style_axes, style_legend
+
 
 from app.core.constants import MODULE_CONFIG
 from app.services.file_loader import load_file
@@ -705,8 +708,23 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         self.render_box_chart()
         self.render_bar_chart()
         self.render_corr_chart()
+        
+    def style_axes(self, fig, ax):
+        palette = self.get_palette()
+        fig.patch.set_facecolor(palette["chart_bg"])
+        ax.set_facecolor(palette["chart_bg"])
+        ax.grid(True, color=palette["chart_grid"], alpha=0.35, linestyle="--", linewidth=0.7)
 
-    def render_scatter_chart(self):
+        for spine in ax.spines.values():
+            spine.set_color(palette["muted"])
+
+        ax.tick_params(axis="x", colors=palette["text"])
+        ax.tick_params(axis="y", colors=palette["text"])
+        ax.title.set_color(palette["text"])
+        ax.xaxis.label.set_color(palette["text"])
+        ax.yaxis.label.set_color(palette["text"])
+
+    """def render_scatter_chart(self):
         self.clear_chart_frame(self.scatter_frame)
         df = self.get_filtered_df()
         x = self.x_var.get()
@@ -737,9 +755,60 @@ class MaintenanceView(ctk.CTkScrollableFrame):
 
         canvas = FigureCanvasTkAgg(fig, master=self.scatter_frame)
         canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)"""
+        
+    def render_scatter_chart(self):
+        self.clear_chart_frame(self.scatter_frame)
+        df = self.get_filtered_df()
+        x = self.x_var.get()
+        y = self.y_var.get()
+        palette = self.get_palette()
+
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
+        ax = fig.add_subplot(111)
+        style_axes(fig, ax, palette)
+
+        if x in df.columns and y in df.columns:
+            sample = df[[x, y]].dropna().head(1500).copy()
+
+            if "failure" in df.columns:
+                sample["failure_num"] = self.get_failure_series(df.loc[sample.index])
+                fail_df = sample[sample["failure_num"] == 1]
+                ok_df = sample[sample["failure_num"] == 0]
+
+                ax.scatter(
+                    ok_df[x], ok_df[y],
+                    s=18, alpha=0.55,
+                    color=palette["series_1"],
+                    edgecolors="none",
+                    label="Sin falla"
+                )
+                ax.scatter(
+                    fail_df[x], fail_df[y],
+                    s=24, alpha=0.82,
+                    color=palette["series_5"],
+                    edgecolors="none",
+                    label="Con falla"
+                )
+                ax.legend()
+                style_legend(ax, palette)
+            else:
+                ax.scatter(
+                    sample[x], sample[y],
+                    s=18, alpha=0.72,
+                    color=palette["series_1"],
+                    edgecolors="none"
+                )
+
+            ax.set_title(f"{x} vs {y}")
+            ax.set_xlabel(x)
+            ax.set_ylabel(y)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.scatter_frame)
+        canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    def render_box_chart(self):
+    """def render_box_chart(self):
         self.clear_chart_frame(self.box_frame)
         df = self.get_filtered_df()
         metric = self.metric_var.get()
@@ -778,9 +847,59 @@ class MaintenanceView(ctk.CTkScrollableFrame):
 
         canvas = FigureCanvasTkAgg(fig, master=self.box_frame)
         canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)"""
+        
+    def render_box_chart(self):
+        self.clear_chart_frame(self.box_frame)
+        df = self.get_filtered_df()
+        metric = self.metric_var.get()
+        palette = self.get_palette()
+
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
+        ax = fig.add_subplot(111)
+        style_axes(fig, ax, palette)
+
+        if metric in df.columns and "failure" in df.columns:
+            tmp = df[[metric]].copy()
+            tmp["failure_num"] = self.get_failure_series(df)
+
+            data_ok = tmp.loc[tmp["failure_num"] == 0, metric].dropna().values
+            data_fail = tmp.loc[tmp["failure_num"] == 1, metric].dropna().values
+
+            data = []
+            labels = []
+            if len(data_ok) > 0:
+                data.append(data_ok)
+                labels.append("Sin falla")
+            if len(data_fail) > 0:
+                data.append(data_fail)
+                labels.append("Con falla")
+
+            if data:
+                box = ax.boxplot(data, labels=labels, patch_artist=True)
+
+                for patch in box["boxes"]:
+                    patch.set_facecolor(palette["series_1"])
+                    patch.set_alpha(0.70)
+                    patch.set_edgecolor(palette["chart_axis"])
+
+                for median in box["medians"]:
+                    median.set_color(palette["series_2"])
+
+                for whisker in box["whiskers"]:
+                    whisker.set_color(palette["chart_axis"])
+
+                for cap in box["caps"]:
+                    cap.set_color(palette["chart_axis"])
+
+                ax.set_title(f"Distribución de {metric} por estado")
+                ax.set_ylabel(metric)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.box_frame)
+        canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    def render_bar_chart(self):
+    """def render_bar_chart(self):
         self.clear_chart_frame(self.bar_frame)
         df = self.get_filtered_df()
         palette = self.get_palette()
@@ -803,9 +922,48 @@ class MaintenanceView(ctk.CTkScrollableFrame):
 
         canvas = FigureCanvasTkAgg(fig, master=self.bar_frame)
         canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)"""
+        
+    def render_bar_chart(self):
+        self.clear_chart_frame(self.bar_frame)
+        df = self.get_filtered_df()
+        palette = self.get_palette()
+
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
+        ax = fig.add_subplot(111)
+        style_axes(fig, ax, palette)
+
+        if {"device", "failure"}.issubset(df.columns):
+            tmp = df.copy()
+            tmp["failure_num"] = self.get_failure_series(tmp)
+
+            top_n = self.safe_top_n()
+            grouped = tmp.groupby("device")["failure_num"].sum().sort_values(ascending=False).head(top_n)
+
+            bars = ax.bar(
+                grouped.index.astype(str),
+                grouped.values,
+                color=palette["series_2"],
+                edgecolor=palette["accent"]
+            )
+
+            if len(bars) > 0:
+                bars[0].set_color(palette["series_5"])
+
+            ax.set_title(f"Top {top_n} dispositivos con fallas")
+            ax.set_ylabel("Cantidad de fallas")
+
+            for label in ax.get_xticklabels():
+                label.set_rotation(35)
+                label.set_ha("right")
+
+            ax.margins(x=0.05)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.bar_frame)
+        canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    def render_corr_chart(self):
+    """def render_corr_chart(self):
         self.clear_chart_frame(self.corr_frame)
         df = self.get_filtered_df()
         palette = self.get_palette()
@@ -833,6 +991,40 @@ class MaintenanceView(ctk.CTkScrollableFrame):
             cbar.ax.yaxis.set_tick_params(color=palette["text"])
             for label in cbar.ax.get_yticklabels():
                 label.set_color(palette["text"])
+
+        canvas = FigureCanvasTkAgg(fig, master=self.corr_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)"""
+        
+    def render_corr_chart(self):
+        self.clear_chart_frame(self.corr_frame)
+        df = self.get_filtered_df()
+        palette = self.get_palette()
+
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
+        ax = fig.add_subplot(111)
+        style_axes(fig, ax, palette)
+
+        tmp = df.copy()
+        if "failure" in tmp.columns:
+            tmp["failure_num"] = self.get_failure_series(tmp)
+
+        numeric_cols = tmp.select_dtypes(include=["number"]).columns.tolist()
+
+        if len(numeric_cols) >= 2:
+            corr = tmp[numeric_cols].corr(numeric_only=True)
+            img = ax.imshow(corr.values, aspect="auto", cmap="YlGnBu")
+
+            ax.set_title("Correlación métricas vs falla")
+            ax.set_xticks(range(len(corr.columns)))
+            ax.set_yticks(range(len(corr.columns)))
+            ax.set_xticklabels(corr.columns, rotation=45, ha="right", fontsize=8)
+            ax.set_yticklabels(corr.columns, fontsize=8)
+
+            cbar = fig.colorbar(img, ax=ax, fraction=0.046, pad=0.04)
+            cbar.ax.yaxis.set_tick_params(color=palette["chart_text"])
+            for label in cbar.ax.get_yticklabels():
+                label.set_color(palette["chart_text"])
 
         canvas = FigureCanvasTkAgg(fig, master=self.corr_frame)
         canvas.draw()
@@ -884,4 +1076,4 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         self.conclusion_box.configure(state="normal")
         self.conclusion_box.delete("1.0", tk.END)
         self.conclusion_box.insert("1.0", "\n".join(lines))
-        self.conclusion_box.configure(state="disabled")
+        self.conclusion_box.configure(state="disabled") 
