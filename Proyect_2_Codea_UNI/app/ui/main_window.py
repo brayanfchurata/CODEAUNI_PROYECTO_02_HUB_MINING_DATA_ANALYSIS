@@ -1,6 +1,7 @@
 import customtkinter as ctk
+from PIL import Image
 
-from app.core.constants import APP_TITLE, APP_SIZE, MODULE_CONFIG
+from app.core.constants import APP_TITLE, APP_SIZE, MODULE_CONFIG, APP_ICON
 from app.core.app_state import AppState
 from app.ui.styles import THEMES
 from app.modules.home_view import HomeView
@@ -14,13 +15,21 @@ class Proyect2CodeaUNI(ctk.CTk):
     def __init__(self):
         super().__init__()
 
+        self.module_icons = {}
         self.app_state = AppState()
         self.palette = THEMES[self.app_state.current_theme]
 
-        ctk.set_appearance_mode("dark")
+        # Si usas temas claros como Executive Gray:
+        ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
         self.title(APP_TITLE)
+
+        try:
+            self.iconbitmap(APP_ICON)
+        except Exception:
+            pass
+
         self.geometry(APP_SIZE)
         self.configure(fg_color=self.palette["bg"])
 
@@ -30,13 +39,22 @@ class Proyect2CodeaUNI(ctk.CTk):
         self.sidebar = None
         self.content = None
         self.current_view = None
-
-        # cache de vistas
         self.views = {}
 
         self.build_sidebar()
         self.build_content()
         self.show_view("Inicio")
+
+    def load_module_icon(self, icon_path, size=(18, 18)):
+        try:
+            image = Image.open(icon_path)
+            return ctk.CTkImage(
+                light_image=image,
+                dark_image=image,
+                size=size
+            )
+        except Exception:
+            return None
 
     def build_sidebar(self):
         if self.sidebar is not None:
@@ -84,9 +102,16 @@ class Proyect2CodeaUNI(ctk.CTk):
         theme_menu.pack(fill="x", padx=14, pady=(0, 16))
 
         for module_name, cfg in MODULE_CONFIG.items():
+            icon_img = self.load_module_icon(cfg.get("icon_path"))
+            self.module_icons[module_name] = icon_img
+
+            btn_text = f"  {module_name}" if icon_img else f"{cfg.get('icon_text', '•')}  {module_name}"
+
             btn = ctk.CTkButton(
                 self.sidebar,
-                text=f"{cfg['icon']}  {module_name}",
+                text=btn_text,
+                image=icon_img,
+                compound="left",
                 anchor="w",
                 corner_radius=12,
                 fg_color=self.palette["panel"],
@@ -108,7 +133,9 @@ class Proyect2CodeaUNI(ctk.CTk):
         self.palette = THEMES[theme_name]
         self.configure(fg_color=self.palette["bg"])
 
-        # destruir vistas cacheadas para recrearlas con el nuevo tema
+        dark_themes = {"Midnight", "Emerald", "Copper", "Slate", "Carbon", "Graphite"}
+        ctk.set_appearance_mode("dark" if theme_name in dark_themes else "light")
+
         for view in self.views.values():
             view.destroy()
 
@@ -135,7 +162,6 @@ class Proyect2CodeaUNI(ctk.CTk):
     def show_view(self, module_name: str):
         self.app_state.set_module(module_name)
 
-        # La Home siempre se refresca para mostrar el estado actual
         if module_name == "Inicio" and module_name in self.views:
             self.views[module_name].destroy()
             del self.views[module_name]
