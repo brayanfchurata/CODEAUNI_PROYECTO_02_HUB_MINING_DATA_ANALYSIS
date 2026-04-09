@@ -734,18 +734,17 @@ class MiningView(ctk.CTkScrollableFrame):
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        ax.scatter(
-            sample[x],
-            sample[y],
-            s=18,
-            alpha=0.72,
-            color=palette["series_1"],
-            edgecolors="none"
-        )
-
         if {x, y}.issubset(df.columns):
             sample = df[[x, y]].dropna().head(2000)
-            ax.scatter(sample[x], sample[y], s=18, alpha=0.7, color=palette["primary"], edgecolors="none")
+
+            ax.scatter(
+                sample[x],
+                sample[y],
+                s=18,
+                alpha=0.72,
+                color=palette["series_1"],
+                edgecolors="none"
+            )
             ax.set_title(f"{x} vs {y}")
             ax.set_xlabel(x)
             ax.set_ylabel(y)
@@ -764,22 +763,6 @@ class MiningView(ctk.CTkScrollableFrame):
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        bars = ax.bar(
-            grouped.index.astype(str),
-            grouped.values,
-            color=palette["series_2"],
-            edgecolor=palette["accent"]
-        )
-
-        if len(bars) > 0:
-            bars[0].set_color(palette["series_5"])
-
-        for label in ax.get_xticklabels():
-            label.set_rotation(35)
-            label.set_ha("right")
-
-        ax.margins(x=0.05)
-
         if "operator" in df.columns and metric in df.columns:
             grouped = (
                 df.groupby("operator")[metric]
@@ -787,9 +770,24 @@ class MiningView(ctk.CTkScrollableFrame):
                 .sort_values(ascending=False)
                 .head(self.safe_top_n())
             )
-            ax.bar(grouped.index.astype(str), grouped.values, color=palette["primary"])
+
+            bars = ax.bar(
+                grouped.index.astype(str),
+                grouped.values,
+                color=palette["series_2"],
+                edgecolor=palette["accent"]
+            )
+
+            if len(bars) > 0:
+                bars[0].set_color(palette["series_5"])
+
             ax.set_title(f"Top {self.safe_top_n()} operadores por {metric}")
-            ax.tick_params(axis="x", rotation=35)
+
+            for label in ax.get_xticklabels():
+                label.set_rotation(35)
+                label.set_ha("right")
+
+            ax.margins(x=0.05)
 
         canvas = FigureCanvasTkAgg(fig, master=self.bar_frame)
         canvas.draw()
@@ -805,17 +803,30 @@ class MiningView(ctk.CTkScrollableFrame):
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        bars = ax.bar(
-            grouped.index.astype(str),
-            grouped.values,
-            color=palette["series_3"],
-            edgecolor=palette["accent"]
-        )
-
         if "shift" in df.columns and metric in df.columns:
-            grouped = df.groupby("shift")[metric].mean(numeric_only=True).sort_values(ascending=False)
-            ax.bar(grouped.index.astype(str), grouped.values, color=palette["primary"])
+            grouped = (
+                df.groupby("shift")[metric]
+                .mean(numeric_only=True)
+                .sort_values(ascending=False)
+            )
+
+            bars = ax.bar(
+                grouped.index.astype(str),
+                grouped.values,
+                color=palette["series_3"],
+                edgecolor=palette["accent"]
+            )
+
+            if len(bars) > 0:
+                bars[0].set_color(palette["series_5"])
+
             ax.set_title(f"Comparación por turno: {metric}")
+
+            for label in ax.get_xticklabels():
+                label.set_rotation(20)
+                label.set_ha("right")
+
+            ax.margins(x=0.05)
 
         canvas = FigureCanvasTkAgg(fig, master=self.shift_frame)
         canvas.draw()
@@ -831,17 +842,16 @@ class MiningView(ctk.CTkScrollableFrame):
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        ax.hist(
-            data,
-            bins=30,
-            color=palette["series_1"],
-            alpha=0.80,
-            edgecolor=palette["chart_axis"]
-        )
-
         if metric in df.columns:
             data = df[metric].dropna()
-            ax.hist(data, bins=30, color=palette["primary"], alpha=0.8)
+
+            ax.hist(
+                data,
+                bins=30,
+                color=palette["series_1"],
+                alpha=0.80,
+                edgecolor=palette["chart_axis"]
+            )
             ax.set_title(f"Distribución de {metric}")
             ax.set_xlabel(metric)
 
@@ -884,20 +894,6 @@ class MiningView(ctk.CTkScrollableFrame):
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        bars = ax.bar(
-            grouped.index.astype(str),
-            grouped.values,
-            color=palette["series_2"],
-            edgecolor=palette["accent"]
-        )
-
-        if len(bars) > 0:
-            bars[0].set_color(palette["series_5"])
-
-        for label in ax.get_xticklabels():
-            label.set_rotation(35)
-            label.set_ha("right")
-
         if "operator" in df.columns and metric in df.columns:
             grouped = (
                 df.groupby("operator")[metric]
@@ -905,14 +901,29 @@ class MiningView(ctk.CTkScrollableFrame):
                 .sort_values(ascending=False)
                 .head(self.safe_top_n())
             )
-            ax.bar(grouped.index.astype(str), grouped.values, color=palette["primary"])
+
+            bars = ax.bar(
+                grouped.index.astype(str),
+                grouped.values,
+                color=palette["series_2"],
+                edgecolor=palette["accent"]
+            )
+
+            if len(bars) > 0:
+                bars[0].set_color(palette["series_5"])
+
             ax.set_title(f"Operadores líderes por {metric}")
-            ax.tick_params(axis="x", rotation=35)
+
+            for label in ax.get_xticklabels():
+                label.set_rotation(35)
+                label.set_ha("right")
+
+            ax.margins(x=0.05)
 
         canvas = FigureCanvasTkAgg(fig, master=self.report_chart_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
-
+    
     def render_conclusions(self, initial):
         df = self.get_filtered_df()
         metric = self.metric_var.get()

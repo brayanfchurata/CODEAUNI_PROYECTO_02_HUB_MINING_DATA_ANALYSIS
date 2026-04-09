@@ -683,46 +683,37 @@ class GeologyView(ctk.CTkScrollableFrame):
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        """fig = Figure(figsize=(5.2, 3.4), dpi=100)
-        ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)"""
-
         if {"rock_name", metric}.issubset(df.columns):
             common = df["rock_name"].astype(str).value_counts().head(8).index
             subset = df[df["rock_name"].astype(str).isin(common)]
-            data = [subset[subset["rock_name"].astype(str) == r][metric].dropna().values for r in common]
-            
-            box = ax.boxplot(data, labels=list(common), patch_artist=True)
+            data = [
+                subset[subset["rock_name"].astype(str) == r][metric].dropna().values
+                for r in common
+            ]
 
-            for patch in box["boxes"]:
-                patch.set_facecolor(palette["series_1"])
-                patch.set_alpha(0.70)
-                patch.set_edgecolor(palette["chart_axis"])
+            if any(len(arr) > 0 for arr in data):
+                box = ax.boxplot(data, labels=list(common), patch_artist=True)
 
-            for median in box["medians"]:
-                median.set_color(palette["series_2"])
+                for patch in box["boxes"]:
+                    patch.set_facecolor(palette["series_1"])
+                    patch.set_alpha(0.70)
+                    patch.set_edgecolor(palette["chart_axis"])
 
-            for whisker in box["whiskers"]:
-                whisker.set_color(palette["chart_axis"])
+                for median in box["medians"]:
+                    median.set_color(palette["series_2"])
 
-            for cap in box["caps"]:
-                cap.set_color(palette["chart_axis"])
+                for whisker in box["whiskers"]:
+                    whisker.set_color(palette["chart_axis"])
 
-            ax.tick_params(axis="x")
-            for label in ax.get_xticklabels():
-                label.set_rotation(30)
-                label.set_ha("right")
-            
-            """box = ax.boxplot(data, labels=list(common), patch_artist=True)
-            for patch in box["boxes"]:
-                patch.set_facecolor(palette["primary"])
-                patch.set_alpha(0.75)
-                patch.set_edgecolor(palette["accent"])
-            for median in box["medians"]:
-                median.set_color(palette["text"])
-            ax.set_title(f"Distribución de {metric} por litología")
-            ax.set_ylabel(metric)
-            ax.tick_params(axis="x", rotation=30)"""
+                for cap in box["caps"]:
+                    cap.set_color(palette["chart_axis"])
+
+                ax.set_title(f"Distribución de {metric} por litología")
+                ax.set_ylabel(metric)
+
+                for label in ax.get_xticklabels():
+                    label.set_rotation(30)
+                    label.set_ha("right")
 
         canvas = FigureCanvasTkAgg(fig, master=self.box_frame)
         canvas.draw()
@@ -738,17 +729,33 @@ class GeologyView(ctk.CTkScrollableFrame):
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        """fig = Figure(figsize=(5.2, 3.4), dpi=100)
-        ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)"""
-
         if {"rock_name", metric}.issubset(df.columns):
             top_n = self.safe_top_n()
-            grouped = df.groupby("rock_name")[metric].mean(numeric_only=True).sort_values(ascending=False).head(top_n)
-            ax.bar(grouped.index.astype(str), grouped.values, color=palette["primary"], edgecolor=palette["accent"])
+            grouped = (
+                df.groupby("rock_name")[metric]
+                .mean(numeric_only=True)
+                .sort_values(ascending=False)
+                .head(top_n)
+            )
+
+            bars = ax.bar(
+                grouped.index.astype(str),
+                grouped.values,
+                color=palette["series_2"],
+                edgecolor=palette["accent"]
+            )
+
+            if len(bars) > 0:
+                bars[0].set_color(palette["series_5"])
+
             ax.set_title(f"Top {top_n} litologías por {metric}")
             ax.set_ylabel(metric)
-            ax.tick_params(axis="x", rotation=35)
+
+            for label in ax.get_xticklabels():
+                label.set_rotation(35)
+                label.set_ha("right")
+
+            ax.margins(x=0.05)
 
         canvas = FigureCanvasTkAgg(fig, master=self.bar_frame)
         canvas.draw()
@@ -763,15 +770,11 @@ class GeologyView(ctk.CTkScrollableFrame):
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        """fig = Figure(figsize=(5.2, 3.4), dpi=100)
-        ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)"""
-
         numeric_cols = self.numeric_columns(df)
         if len(numeric_cols) >= 2:
             corr = df[numeric_cols].corr(numeric_only=True)
             img = ax.imshow(corr.values, aspect="auto", cmap="YlGnBu")
-            #img = ax.imshow(corr.values, aspect="auto")
+
             ax.set_title("Correlación geoquímica")
             ax.set_xticks(range(len(corr.columns)))
             ax.set_yticks(range(len(corr.columns)))
@@ -779,9 +782,9 @@ class GeologyView(ctk.CTkScrollableFrame):
             ax.set_yticklabels(corr.columns, fontsize=8)
 
             cbar = fig.colorbar(img, ax=ax, fraction=0.046, pad=0.04)
-            cbar.ax.yaxis.set_tick_params(color=palette["text"])
+            cbar.ax.yaxis.set_tick_params(color=palette["chart_text"])
             for label in cbar.ax.get_yticklabels():
-                label.set_color(palette["text"])
+                label.set_color(palette["chart_text"])
 
         canvas = FigureCanvasTkAgg(fig, master=self.corr_frame)
         canvas.draw()
