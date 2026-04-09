@@ -90,7 +90,7 @@ def missing_summary(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("missing", ascending=False)
 
 
-def categorical_summary(df: pd.DataFrame) -> pd.DataFrame:
+"""def categorical_summary(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
 
     for col in df.columns:
@@ -107,13 +107,45 @@ def categorical_summary(df: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             continue
 
+    return pd.DataFrame(rows)"""
+    
+def categorical_summary(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    object_cols = [col for col in df.columns if df[col].dtype == "object"][:12]
+
+    for col in object_cols:
+        try:
+            mode = df[col].mode(dropna=True)
+            rows.append(
+                {
+                    "column": col,
+                    "unique_values": int(df[col].nunique(dropna=True)),
+                    "top_value": mode.iloc[0] if not mode.empty else "N/D",
+                }
+            )
+        except Exception:
+            continue
+
     return pd.DataFrame(rows)
 
 
+"""def numeric_summary(df: pd.DataFrame) -> pd.DataFrame:
+    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    if not numeric_cols:
+        return pd.DataFrame()
+
+    try:
+        return df[numeric_cols].describe().T.reset_index().rename(columns={"index": "column"})
+    except Exception:
+        return pd.DataFrame()"""
+        
 def numeric_summary(df: pd.DataFrame) -> pd.DataFrame:
     numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
     if not numeric_cols:
         return pd.DataFrame()
+
+    # limitar para evitar costo alto
+    numeric_cols = numeric_cols[:12]
 
     try:
         return df[numeric_cols].describe().T.reset_index().rename(columns={"index": "column"})

@@ -5,7 +5,7 @@ from tkinter import filedialog, messagebox, ttk
 import customtkinter as ctk
 import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
+from app.ui.chart_theme import create_figure, style_axes, style_legend
 
 from app.core.constants import MODULE_CONFIG
 from app.services.file_loader import load_file
@@ -438,6 +438,14 @@ class MiningView(ctk.CTkScrollableFrame):
         self.conclusion_box.insert("1.0", "Aquí aparecerán conclusiones para la decisión operativa.")
         self.conclusion_box.configure(state="disabled")
 
+    """def toggle_mode(self):
+        if self.view_mode_var.get() == "Analisis":
+            self.report_zone.pack_forget()
+            self.analysis_zone.pack(fill="both", expand=True, pady=(0, 0))
+        else:
+            self.analysis_zone.pack_forget()
+            self.report_zone.pack(fill="both", expand=True, pady=(0, 0))"""
+            
     def toggle_mode(self):
         if self.view_mode_var.get() == "Analisis":
             self.report_zone.pack_forget()
@@ -445,6 +453,9 @@ class MiningView(ctk.CTkScrollableFrame):
         else:
             self.analysis_zone.pack_forget()
             self.report_zone.pack(fill="both", expand=True, pady=(0, 0))
+
+        if self.df is not None:
+            self.refresh_all(initial=False)
 
     # -------------------------------------------------
     # data flow
@@ -531,7 +542,7 @@ class MiningView(ctk.CTkScrollableFrame):
             self.shift_menu.configure(values=["Todos"] + shifts)
             self.shift_var.set("Todos")
 
-    def refresh_all(self, initial=False):
+    """def refresh_all(self, initial=False):
         if self.df is None:
             return
         self.render_kpis()
@@ -541,7 +552,23 @@ class MiningView(ctk.CTkScrollableFrame):
         self.render_all_charts()
         self.render_report_main()
         self.render_report_chart()
-        self.render_conclusions(initial)
+        self.render_conclusions(initial)"""
+        
+    def refresh_all(self, initial=False):
+        if self.df is None:
+            return
+
+        self.render_kpis()
+        self.render_status_box(initial)
+
+        if self.view_mode_var.get() == "Analisis":
+            self.render_preview_table()
+            self.render_summary_table()
+            self.render_all_charts()
+        else:
+            self.render_report_main()
+            self.render_report_chart()
+            self.render_conclusions(initial)
 
     # -------------------------------------------------
     # renderers
@@ -675,6 +702,7 @@ class MiningView(ctk.CTkScrollableFrame):
         for child in frame.winfo_children():
             child.destroy()
 
+    """ se quita porque jala ddesde chart theme ya no es necesario y de styles
     def style_axes(self, fig, ax):
         palette = self.get_palette()
         fig.patch.set_facecolor(palette.get("chart_bg", palette["panel"]))
@@ -688,7 +716,7 @@ class MiningView(ctk.CTkScrollableFrame):
         ax.tick_params(axis="y", colors=palette["text"])
         ax.title.set_color(palette["text"])
         ax.xaxis.label.set_color(palette["text"])
-        ax.yaxis.label.set_color(palette["text"])
+        ax.yaxis.label.set_color(palette["text"])"""
 
     def render_all_charts(self):
         self.render_scatter_chart()
@@ -702,9 +730,18 @@ class MiningView(ctk.CTkScrollableFrame):
         x, y = self.x_var.get(), self.y_var.get()
         palette = self.get_palette()
 
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
+        style_axes(fig, ax, palette)
+
+        ax.scatter(
+            sample[x],
+            sample[y],
+            s=18,
+            alpha=0.72,
+            color=palette["series_1"],
+            edgecolors="none"
+        )
 
         if {x, y}.issubset(df.columns):
             sample = df[[x, y]].dropna().head(2000)
@@ -723,9 +760,25 @@ class MiningView(ctk.CTkScrollableFrame):
         metric = self.metric_var.get()
         palette = self.get_palette()
 
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
+        style_axes(fig, ax, palette)
+
+        bars = ax.bar(
+            grouped.index.astype(str),
+            grouped.values,
+            color=palette["series_2"],
+            edgecolor=palette["accent"]
+        )
+
+        if len(bars) > 0:
+            bars[0].set_color(palette["series_5"])
+
+        for label in ax.get_xticklabels():
+            label.set_rotation(35)
+            label.set_ha("right")
+
+        ax.margins(x=0.05)
 
         if "operator" in df.columns and metric in df.columns:
             grouped = (
@@ -748,9 +801,16 @@ class MiningView(ctk.CTkScrollableFrame):
         metric = self.metric_var.get()
         palette = self.get_palette()
 
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
+        style_axes(fig, ax, palette)
+
+        bars = ax.bar(
+            grouped.index.astype(str),
+            grouped.values,
+            color=palette["series_3"],
+            edgecolor=palette["accent"]
+        )
 
         if "shift" in df.columns and metric in df.columns:
             grouped = df.groupby("shift")[metric].mean(numeric_only=True).sort_values(ascending=False)
@@ -767,9 +827,17 @@ class MiningView(ctk.CTkScrollableFrame):
         metric = self.metric_var.get()
         palette = self.get_palette()
 
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
+        style_axes(fig, ax, palette)
+
+        ax.hist(
+            data,
+            bins=30,
+            color=palette["series_1"],
+            alpha=0.80,
+            edgecolor=palette["chart_axis"]
+        )
 
         if metric in df.columns:
             data = df[metric].dropna()
@@ -812,9 +880,23 @@ class MiningView(ctk.CTkScrollableFrame):
         metric = self.metric_var.get()
         palette = self.get_palette()
 
-        fig = Figure(figsize=(7.2, 4.2), dpi=100)
+        fig = create_figure(palette, figsize=(7.2, 4.2), dpi=100)
         ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
+        style_axes(fig, ax, palette)
+
+        bars = ax.bar(
+            grouped.index.astype(str),
+            grouped.values,
+            color=palette["series_2"],
+            edgecolor=palette["accent"]
+        )
+
+        if len(bars) > 0:
+            bars[0].set_color(palette["series_5"])
+
+        for label in ax.get_xticklabels():
+            label.set_rotation(35)
+            label.set_ha("right")
 
         if "operator" in df.columns and metric in df.columns:
             grouped = (
