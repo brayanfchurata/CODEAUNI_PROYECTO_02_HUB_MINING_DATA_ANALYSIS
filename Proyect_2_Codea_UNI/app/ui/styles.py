@@ -26,6 +26,10 @@ THEMES = {
     "series_3": "#4f8b68",
     "series_4": "#7f8fb8",
     "series_5": "#c46060",
+    "kpi_info": "#4a7fb5",
+    "kpi_ok": "#4f8b68",
+    "kpi_warn": "#be8a34",
+    "kpi_alert": "#c46060",
     },
     
     "Arctic Blue": {

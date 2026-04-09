@@ -15,7 +15,7 @@ class HomeView(ctk.CTkFrame):
         self.chart_canvases = {}
         self.chart_frames = {}
         self.chart_options = {
-            "Mining": ctk.StringVar(value="Turnos"),
+            "Mining": ctk.StringVar(value="Top operadores"),
             "Geology": ctk.StringVar(value="Boxplot SiO2"),
             "Metallurgy": ctk.StringVar(value="Tendencia sílice"),
             "Maintenance": ctk.StringVar(value="Equipos con fallas"),
@@ -78,11 +78,14 @@ class HomeView(ctk.CTkFrame):
         palette = self.get_palette()
         status_info = self.module_status_data()
 
-        make_title(self, "MineData Hub").pack(anchor="w", padx=20, pady=(18, 4))
+        # =========================
+        # HEADER
+        # =========================
+        make_title(self, "MineData Hub").pack(anchor="w", padx=18, pady=(16, 4))
         make_subtitle(
             self,
             "Plataforma integrada de analítica minera con módulos de Mining, Geology, Metallurgy y Maintenance.",
-        ).pack(anchor="w", padx=20, pady=(0, 8))
+        ).pack(anchor="w", padx=18, pady=(0, 8))
 
         loaded = status_info["datasets_loaded"]
         total_records = status_info["total_records"]
@@ -99,7 +102,7 @@ class HomeView(ctk.CTkFrame):
             border_width=1,
             border_color=palette["border"],
         )
-        headline_card.pack(fill="x", padx=14, pady=(0, 8))
+        headline_card.pack(fill="x", padx=12, pady=(0, 8))
 
         ctk.CTkLabel(
             headline_card,
@@ -112,13 +115,15 @@ class HomeView(ctk.CTkFrame):
             headline_card,
             text=headline,
             text_color=palette["muted"],
-            wraplength=1300,
+            wraplength=1400,
             justify="left",
         ).pack(anchor="w", padx=14, pady=(0, 10))
 
-        # Accesos rápidos compactos
+        # =========================
+        # QUICK ACCESS
+        # =========================
         modules_grid = ctk.CTkFrame(self, fg_color="transparent")
-        modules_grid.pack(fill="x", padx=14, pady=(0, 8))
+        modules_grid.pack(fill="x", padx=12, pady=(0, 8))
         modules_grid.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         modules = [m for m in MODULE_CONFIG.keys() if m != "Inicio"]
@@ -131,9 +136,9 @@ class HomeView(ctk.CTkFrame):
                 corner_radius=12,
                 border_width=1,
                 border_color=palette["border"],
-                height=74,
+                height=62,
             )
-            card.grid(row=0, column=i, sticky="nsew", padx=5, pady=4)
+            card.grid(row=0, column=i, sticky="nsew", padx=4, pady=3)
             card.grid_propagate(False)
 
             ctk.CTkLabel(
@@ -141,62 +146,63 @@ class HomeView(ctk.CTkFrame):
                 text=f"{cfg.get('icon_text', '•')} {module_name}",
                 font=ctk.CTkFont(size=14, weight="bold"),
                 text_color=palette["text"],
-            ).pack(anchor="w", padx=12, pady=(10, 2))
+            ).pack(anchor="w", padx=12, pady=(8, 1))
 
             ctk.CTkLabel(
                 card,
                 text=cfg["description"],
-                wraplength=240,
+                wraplength=220,
                 justify="left",
                 text_color=palette["muted"],
-            ).pack(anchor="w", padx=12, pady=(0, 6))
+            ).pack(anchor="w", padx=12, pady=(0, 4))
 
-        # Cuerpo principal
+        # =========================
+        # MAIN BODY
+        # =========================
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=14, pady=(2, 12))
+        body.pack(fill="both", expand=True, padx=12, pady=(2, 10))
         body.grid_columnconfigure(0, weight=1)
-        body.grid_columnconfigure(1, weight=3)
+        body.grid_columnconfigure(1, weight=4)
         body.grid_rowconfigure(0, weight=1)
 
         # =========================
-        # COLUMNA IZQUIERDA
+        # LEFT COLUMN
         # =========================
         left_col = ctk.CTkFrame(body, fg_color="transparent")
-        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         left_col.grid_rowconfigure(2, weight=1)
 
         contact_card = ctk.CTkFrame(
             left_col,
             fg_color=palette["card_alt"],
-            corner_radius=14,
+            corner_radius=12,
             border_width=1,
             border_color=palette["border"],
         )
-        contact_card.pack(fill="x", pady=(0, 6))
+        contact_card.pack(fill="x", pady=(0, 5))
 
         ctk.CTkLabel(
             contact_card,
             text="Project / Contact",
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=ctk.CTkFont(size=14, weight="bold"),
             text_color=palette["text"],
-        ).pack(anchor="w", padx=12, pady=(10, 8))
+        ).pack(anchor="w", padx=12, pady=(9, 6))
 
         contact_lines = [
             ("Autor", "Brayan Churata"),
-            ("Grupo","CodeInMining "),
-            ("Versión", "1.32"),
-            ("Correo", "bchurata3@gmail.com"),
-            ("Número","+51 927 215 240")
+            ("Programa", "CODEa UNI"),
+            ("Versión", "1.0"),
+            ("Correo", "brayan.churata@dataminesoftware.com"),
         ]
 
         for label, value in contact_lines:
             row = ctk.CTkFrame(contact_card, fg_color="transparent")
-            row.pack(fill="x", padx=12, pady=2)
+            row.pack(fill="x", padx=12, pady=1)
 
             ctk.CTkLabel(
                 row,
                 text=f"{label}:",
-                width=68,
+                width=66,
                 anchor="w",
                 text_color=palette["muted"],
             ).pack(side="left")
@@ -210,45 +216,37 @@ class HomeView(ctk.CTkFrame):
                 text_color=palette["text"],
             ).pack(side="left", fill="x", expand=True)
 
-        ctk.CTkLabel(
-            contact_card,
-            text="Hub de analítica para exploración, operación, planta y mantenimiento.",
-            wraplength=220,
-            justify="left",
-            text_color=palette["muted"],
-        ).pack(anchor="w", padx=12, pady=(8, 10))
-
         insights_card = ctk.CTkFrame(
             left_col,
             fg_color=palette["card_alt"],
-            corner_radius=14,
+            corner_radius=12,
             border_width=1,
             border_color=palette["border"],
         )
-        insights_card.pack(fill="x", pady=(0, 6))
+        insights_card.pack(fill="x", pady=(0, 5))
 
         ctk.CTkLabel(
             insights_card,
             text="Quick Insights",
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=ctk.CTkFont(size=14, weight="bold"),
             text_color=palette["text"],
-        ).pack(anchor="w", padx=12, pady=(10, 8))
+        ).pack(anchor="w", padx=12, pady=(9, 6))
 
         insights = [
-            ("Módulos cargados", str(status_info["datasets_loaded"])),
-            ("Más registros", status_info["largest_module"]),
-            ("Registros máx.", f"{status_info['largest_records']:,}"),
+            ("Módulos", str(status_info["datasets_loaded"])),
+            ("Mayor volumen", status_info["largest_module"]),
+            ("Registros", f"{status_info['largest_records']:,}"),
             ("Alertas", str(status_info["alerts"])),
         ]
 
         for label, value in insights:
             row = ctk.CTkFrame(insights_card, fg_color="transparent")
-            row.pack(fill="x", padx=12, pady=2)
+            row.pack(fill="x", padx=12, pady=1)
 
             ctk.CTkLabel(
                 row,
                 text=f"{label}:",
-                width=95,
+                width=88,
                 anchor="w",
                 text_color=palette["muted"],
             ).pack(side="left")
@@ -263,7 +261,7 @@ class HomeView(ctk.CTkFrame):
         status_card = ctk.CTkFrame(
             left_col,
             fg_color=palette["card_alt"],
-            corner_radius=14,
+            corner_radius=12,
             border_width=1,
             border_color=palette["border"],
         )
@@ -272,15 +270,15 @@ class HomeView(ctk.CTkFrame):
         ctk.CTkLabel(
             status_card,
             text="Module Status",
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=ctk.CTkFont(size=14, weight="bold"),
             text_color=palette["text"],
-        ).pack(anchor="w", padx=12, pady=(10, 8))
+        ).pack(anchor="w", padx=12, pady=(9, 6))
 
         header = ctk.CTkFrame(status_card, fg_color="transparent")
         header.pack(fill="x", padx=12, pady=(0, 4))
 
         headers = ["Módulo", "Estado", "Reg."]
-        widths = [95, 75, 55]
+        widths = [88, 72, 54]
 
         for text, width in zip(headers, widths):
             ctk.CTkLabel(
@@ -294,85 +292,99 @@ class HomeView(ctk.CTkFrame):
 
         for module, status, records, _ in status_info["rows"]:
             row = ctk.CTkFrame(status_card, fg_color="transparent")
-            row.pack(fill="x", padx=12, pady=3)
+            row.pack(fill="x", padx=12, pady=2)
 
             values = [module, status, records]
-            for value, width in zip(values, widths):
+            for idx, (value, width) in enumerate(zip(values, widths)):
+                if idx == 1:
+                    color = palette["success"] if value == "Cargado" else palette["muted"]
+                else:
+                    color = palette["text"]
+
                 ctk.CTkLabel(
                     row,
                     text=value,
                     width=width,
                     anchor="w",
-                    text_color=palette["text"],
+                    text_color=color,
                 ).pack(side="left", padx=(0, 4))
 
         # =========================
-        # COLUMNA DERECHA
+        # RIGHT COLUMN
         # =========================
         right_col = ctk.CTkFrame(body, fg_color="transparent")
         right_col.grid(row=0, column=1, sticky="nsew")
         right_col.grid_rowconfigure(1, weight=1)
 
+        # KPI SECTION
         overview_card = ctk.CTkFrame(
             right_col,
             fg_color=palette["card_alt"],
-            corner_radius=14,
+            corner_radius=12,
             border_width=1,
             border_color=palette["border"],
         )
-        overview_card.pack(fill="x", pady=(0, 6))
+        overview_card.pack(fill="x", pady=(0, 5))
 
         ctk.CTkLabel(
             overview_card,
             text="System Overview",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=15, weight="bold"),
             text_color=palette["text"],
-        ).pack(anchor="w", padx=14, pady=(10, 4))
+        ).pack(anchor="w", padx=14, pady=(9, 3))
 
         ctk.CTkLabel(
             overview_card,
             text="Resumen ejecutivo del sistema y referencias visuales por módulo.",
             text_color=palette["muted"],
-        ).pack(anchor="w", padx=14, pady=(0, 8))
+        ).pack(anchor="w", padx=14, pady=(0, 7))
 
         kpi_wrap = ctk.CTkFrame(overview_card, fg_color="transparent")
         kpi_wrap.pack(fill="x", padx=10, pady=(0, 10))
         kpi_wrap.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-        summary_cards = [
-            ("Módulos", "4"),
-            ("Datasets cargados", str(status_info["datasets_loaded"])),
-            ("Registros totales", f"{status_info['total_records']:,}"),
-            ("Alertas activas", str(status_info["alerts"])),
+        kpi_items = [
+            ("Módulos", "4", palette.get("kpi_info", palette["primary"])),
+            ("Datasets cargados", str(status_info["datasets_loaded"]), palette.get("kpi_ok", palette["success"])),
+            ("Registros totales", f"{status_info['total_records']:,}", palette.get("kpi_info", palette["primary"])),
+            (
+                "Alertas activas",
+                str(status_info["alerts"]),
+                palette.get("kpi_alert", palette["danger"]) if status_info["alerts"] > 0 else palette.get("kpi_ok", palette["success"]),
+            ),
         ]
 
-        for i, (label, value) in enumerate(summary_cards):
-            card = ctk.CTkFrame(
+        for i, (label, value, accent) in enumerate(kpi_items):
+            outer = ctk.CTkFrame(
                 kpi_wrap,
                 fg_color=palette["panel"],
                 corner_radius=12,
                 border_width=1,
                 border_color=palette["border"],
             )
-            card.grid(row=0, column=i, sticky="nsew", padx=4, pady=3)
+            outer.grid(row=0, column=i, sticky="nsew", padx=4, pady=3)
+
+            top_line = ctk.CTkFrame(outer, fg_color=accent, height=4, corner_radius=8)
+            top_line.pack(fill="x", padx=0, pady=(0, 6))
 
             ctk.CTkLabel(
-                card,
+                outer,
                 text=label,
                 text_color=palette["muted"],
-            ).pack(anchor="w", padx=10, pady=(8, 2))
+            ).pack(anchor="w", padx=10, pady=(0, 2))
 
             ctk.CTkLabel(
-                card,
+                outer,
                 text=value,
-                font=ctk.CTkFont(size=16, weight="bold"),
+                font=ctk.CTkFont(size=17, weight="bold"),
                 text_color=palette["text"],
             ).pack(anchor="w", padx=10, pady=(0, 8))
 
+        # CHARTS SECTION
         charts_card = ctk.CTkFrame(
             right_col,
             fg_color=palette["card_alt"],
-            corner_radius=14,
+            corner_radius=12,
             border_width=1,
             border_color=palette["border"],
         )
@@ -381,18 +393,18 @@ class HomeView(ctk.CTkFrame):
         ctk.CTkLabel(
             charts_card,
             text="Visual Summary",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=15, weight="bold"),
             text_color=palette["text"],
-        ).pack(anchor="w", padx=14, pady=(10, 4))
+        ).pack(anchor="w", padx=14, pady=(9, 3))
 
         ctk.CTkLabel(
             charts_card,
             text="Cada módulo muestra una visual de referencia. Puedes cambiar el tipo de gráfica desde el selector.",
             text_color=palette["muted"],
-        ).pack(anchor="w", padx=14, pady=(0, 8))
+        ).pack(anchor="w", padx=14, pady=(0, 7))
 
         charts_grid = ctk.CTkFrame(charts_card, fg_color="transparent")
-        charts_grid.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        charts_grid.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         charts_grid.grid_columnconfigure((0, 1), weight=1)
         charts_grid.grid_rowconfigure((0, 1), weight=1)
 
@@ -404,14 +416,14 @@ class HomeView(ctk.CTkFrame):
             chart_card = ctk.CTkFrame(
                 charts_grid,
                 fg_color=palette["panel"],
-                corner_radius=14,
+                corner_radius=12,
                 border_width=1,
                 border_color=palette["border"],
             )
-            chart_card.grid(row=row, column=col, sticky="nsew", padx=5, pady=5)
+            chart_card.grid(row=row, column=col, sticky="nsew", padx=4, pady=4)
 
             topbar = ctk.CTkFrame(chart_card, fg_color="transparent")
-            topbar.pack(fill="x", padx=10, pady=(10, 6))
+            topbar.pack(fill="x", padx=10, pady=(8, 4))
 
             ctk.CTkLabel(
                 topbar,
@@ -425,12 +437,13 @@ class HomeView(ctk.CTkFrame):
                 values=self.get_chart_options(module_name),
                 variable=self.chart_options[module_name],
                 command=lambda _, m=module_name: self.render_module_chart(m),
-                width=160,
+                width=150,
+                height=28,
             )
             selector.pack(side="right")
 
             frame = ctk.CTkFrame(chart_card, fg_color="transparent")
-            frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+            frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
             self.chart_frames[module_name] = frame
 
         for module_name in modules_chart_order:
@@ -471,8 +484,8 @@ class HomeView(ctk.CTkFrame):
     def empty_chart_message(self, ax, message):
         ax.text(0.5, 0.5, message, ha="center", va="center", fontsize=11)
         ax.set_xticks([])
-        ax.set_yticks([])   
-    
+        ax.set_yticks([])
+
     def clear_chart(self, module_name):
         frame = self.chart_frames[module_name]
         for child in frame.winfo_children():
@@ -482,7 +495,7 @@ class HomeView(ctk.CTkFrame):
         palette = self.get_palette()
         fig.patch.set_facecolor(palette.get("chart_bg", palette["panel"]))
         ax.set_facecolor(palette.get("chart_bg", palette["panel"]))
-        ax.grid(True, color=palette.get("chart_grid", palette["border"]), alpha=0.35, linestyle="--", linewidth=0.7)
+        ax.grid(True, color=palette.get("chart_grid", palette["border"]), alpha=0.30, linestyle="--", linewidth=0.6)
 
         for spine in ax.spines.values():
             spine.set_color(palette["chart_axis"])
@@ -490,7 +503,7 @@ class HomeView(ctk.CTkFrame):
         ax.tick_params(axis="x", colors=palette["chart_text"], labelsize=8)
         ax.tick_params(axis="y", colors=palette["chart_text"], labelsize=8)
         ax.title.set_color(palette["chart_text"])
-        ax.title.set_fontsize(11)
+        ax.title.set_fontsize(10.5)
         ax.xaxis.label.set_color(palette["chart_text"])
         ax.yaxis.label.set_color(palette["chart_text"])
 
@@ -500,7 +513,7 @@ class HomeView(ctk.CTkFrame):
         df = self.get_dataset(module_name)
         chart_type = self.chart_options[module_name].get()
 
-        fig = Figure(figsize=(6.0, 3.4), dpi=100)
+        fig = Figure(figsize=(6.4, 3.8), dpi=100)
         ax = fig.add_subplot(111)
         self.style_axes(fig, ax)
 
@@ -525,7 +538,7 @@ class HomeView(ctk.CTkFrame):
                             labels = self.shorten_labels(grouped.index.tolist(), 12)
                             ax.bar(labels, grouped.values, color=palette["series_1"])
                             ax.set_title("Top operadores")
-                            ax.tick_params(axis="x", rotation=18)
+                            ax.tick_params(axis="x", rotation=16)
                             rendered = True
 
                     elif chart_type == "Turnos" and shift_col and m3_col:
@@ -548,7 +561,7 @@ class HomeView(ctk.CTkFrame):
                             rendered = True
 
                     if not rendered:
-                        self.empty_chart_message(ax, "Mining: faltan columnas válidas para esta visual")
+                        self.empty_chart_message(ax, "Mining: faltan columnas válidas")
 
                 elif module_name == "Geology":
                     rock_col = self.find_column(df, ["rock_name", "rock", "litologia", "lithology"])
@@ -567,10 +580,8 @@ class HomeView(ctk.CTkFrame):
                             labels = self.shorten_labels(common, 12)
                             ax.boxplot(data, labels=labels)
                             ax.set_title("Variabilidad SiO2")
-                            ax.tick_params(axis="x", rotation=15)
+                            ax.tick_params(axis="x", rotation=14)
                             rendered = True
-                        else:
-                            rendered = False
 
                     elif chart_type == "SiO2 vs TiO2" and sio2_col and tio2_col:
                         temp = df[[sio2_col, tio2_col]].copy()
@@ -595,11 +606,11 @@ class HomeView(ctk.CTkFrame):
                             labels = self.shorten_labels(grouped.index.tolist(), 12)
                             ax.bar(labels, grouped.values, color=palette["series_2"])
                             ax.set_title("Top litologías")
-                            ax.tick_params(axis="x", rotation=18)
+                            ax.tick_params(axis="x", rotation=16)
                             rendered = True
 
                     if not rendered:
-                        self.empty_chart_message(ax, "Geology: faltan columnas válidas para esta visual")
+                        self.empty_chart_message(ax, "Geology: faltan columnas válidas")
 
                 elif module_name == "Metallurgy":
                     date_col = self.find_column(df, ["date", "fecha"])
@@ -616,7 +627,7 @@ class HomeView(ctk.CTkFrame):
                             agg = temp.groupby(temp[date_col].dt.date)[silica_col].mean().reset_index()
                             ax.plot(agg[date_col], agg[silica_col], color=palette["series_3"], linewidth=2)
                             ax.set_title("Tendencia sílice")
-                            ax.tick_params(axis="x", rotation=18)
+                            ax.tick_params(axis="x", rotation=16)
                             rendered = True
 
                     elif chart_type == "Hierro vs sílice" and iron_col and silica_col:
@@ -640,7 +651,7 @@ class HomeView(ctk.CTkFrame):
                             rendered = True
 
                     if not rendered:
-                        self.empty_chart_message(ax, "Metallurgy: faltan columnas válidas para esta visual")
+                        self.empty_chart_message(ax, "Metallurgy: faltan columnas válidas")
 
                 elif module_name == "Maintenance":
                     device_col = self.find_column(df, ["device", "equipo"])
@@ -658,7 +669,7 @@ class HomeView(ctk.CTkFrame):
                             labels = self.shorten_labels(grouped.index.tolist(), 12)
                             ax.bar(labels, grouped.values, color=palette["series_5"])
                             ax.set_title("Equipos con fallas")
-                            ax.tick_params(axis="x", rotation=18)
+                            ax.tick_params(axis="x", rotation=16)
                             rendered = True
 
                     elif chart_type == "Falla vs no falla" and failure_col and metric1_col:
@@ -682,12 +693,12 @@ class HomeView(ctk.CTkFrame):
                             rendered = True
 
                     if not rendered:
-                        self.empty_chart_message(ax, "Maintenance: faltan columnas válidas para esta visual")
+                        self.empty_chart_message(ax, "Maintenance: faltan columnas válidas")
 
             except Exception:
                 self.empty_chart_message(ax, "No se pudo renderizar")
 
-        fig.tight_layout(pad=1.2)
+        fig.tight_layout(pad=1.1)
 
         canvas = FigureCanvasTkAgg(fig, master=self.chart_frames[module_name])
         canvas.draw()
