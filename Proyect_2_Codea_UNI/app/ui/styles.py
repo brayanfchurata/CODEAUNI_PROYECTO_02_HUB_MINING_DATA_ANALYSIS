@@ -1,4 +1,207 @@
 THEMES = {
+    "Executive Gray": {
+    "bg": "#e6ebef",
+    "surface": "#d9e1e8",
+    "panel": "#f2f5f8",
+    "border": "#c2ccd6",
+    "text": "#23384d",
+    "muted": "#6d7f92",
+    "primary": "#4a7fb5",
+    "primary_hover": "#3c6f9f",
+    "success": "#4f8b68",
+    "warning": "#be8a34",
+    "danger": "#c46060",
+    "accent": "#7aa3cf",
+
+    "chart_bg": "#f2f5f8",
+    "chart_grid": "#d4dce4",
+
+    "chart_text": "#23384d",
+    "chart_axis": "#6d7f92",
+    "card": "#f2f5f8",
+    "card_alt": "#eaf0f4",
+
+    "series_1": "#4a7fb5",
+    "series_2": "#be8a34",
+    "series_3": "#4f8b68",
+    "series_4": "#7f8fb8",
+    "series_5": "#c46060",
+    },
+    
+    "Arctic Blue": {
+        "bg": "#edf3f8",
+        "surface": "#dde8f1",
+        "panel": "#f8fbfd",
+        "border": "#c8d6e3",
+        "text": "#20364d",
+        "muted": "#72859a",
+        "primary": "#4b84c4",
+        "primary_hover": "#3a73b3",
+        "success": "#4b8f72",
+        "warning": "#c89a3a",
+        "danger": "#c46363",
+        "accent": "#7fb2e6",
+
+        "chart_bg": "#f8fbfd",
+        "chart_grid": "#d9e3ec",
+
+        "chart_text": "#20364d",
+        "chart_axis": "#72859a",
+        "card": "#f8fbfd",
+        "card_alt": "#eef4f8",
+
+        "series_1": "#4b84c4",
+        "series_2": "#c89a3a",
+        "series_3": "#4b8f72",
+        "series_4": "#7f91c8",
+        "series_5": "#c46363",
+    },
+
+    "Sandstone": {
+        "bg": "#f2eee8",
+        "surface": "#e6ddd2",
+        "panel": "#fbf8f3",
+        "border": "#d3c5b5",
+        "text": "#4a382b",
+        "muted": "#8a7766",
+        "primary": "#b7793e",
+        "primary_hover": "#9f6734",
+        "success": "#6f8f5f",
+        "warning": "#c9972b",
+        "danger": "#b85c4b",
+        "accent": "#d5a46a",
+
+        "chart_bg": "#fbf8f3",
+        "chart_grid": "#e5ddd3",
+
+        "chart_text": "#4a382b",
+        "chart_axis": "#8a7766",
+        "card": "#fbf8f3",
+        "card_alt": "#f4ede4",
+
+        "series_1": "#b7793e",
+        "series_2": "#c9972b",
+        "series_3": "#6f8f5f",
+        "series_4": "#8a7cc2",
+        "series_5": "#b85c4b",
+    },
+
+    "Steel Blue": {
+        "bg": "#dde4ea",
+        "surface": "#cfd8e1",
+        "panel": "#eef3f7",
+        "border": "#b9c5d0",
+        "text": "#2a3d52",
+        "muted": "#6f8194",
+        "primary": "#557a9e",
+        "primary_hover": "#48698a",
+        "success": "#5b8b72",
+        "warning": "#be8c3b",
+        "danger": "#bd6666",
+        "accent": "#89a9c9",
+
+        "chart_bg": "#eef3f7",
+        "chart_grid": "#d5dde5",
+
+        "chart_text": "#2a3d52",
+        "chart_axis": "#6f8194",
+        "card": "#eef3f7",
+        "card_alt": "#e5ecf2",
+
+        "series_1": "#557a9e",
+        "series_2": "#be8c3b",
+        "series_3": "#5b8b72",
+        "series_4": "#7f8fba",
+        "series_5": "#bd6666",
+    },
+
+    "Carbon": {
+        "bg": "#161a1f",
+        "surface": "#1f252c",
+        "panel": "#2a313a",
+        "border": "#3c4754",
+        "text": "#eef2f6",
+        "muted": "#a2afbd",
+        "primary": "#5d8cc0",
+        "primary_hover": "#4d7aac",
+        "success": "#5aa07a",
+        "warning": "#d09a3d",
+        "danger": "#cf6a6a",
+        "accent": "#8ab4e2",
+
+        "chart_bg": "#2a313a",
+        "chart_grid": "#465260",
+
+        "chart_text": "#eef2f6",
+        "chart_axis": "#a2afbd",
+        "card": "#2a313a",
+        "card_alt": "#323b46",
+
+        "series_1": "#5d8cc0",
+        "series_2": "#d09a3d",
+        "series_3": "#5aa07a",
+        "series_4": "#8b88d8",
+        "series_5": "#cf6a6a",
+    },
+
+    "Graphite": {
+        "bg": "#1b1f24",
+        "surface": "#242a31",
+        "panel": "#303843",
+        "border": "#46515f",
+        "text": "#f3f6f9",
+        "muted": "#a7b1bd",
+        "primary": "#6b8fb3",
+        "primary_hover": "#5c7c9d",
+        "success": "#68a27f",
+        "warning": "#cda04a",
+        "danger": "#cc7272",
+        "accent": "#8db2d6",
+
+        "chart_bg": "#303843",
+        "chart_grid": "#4f5c6b",
+
+        "chart_text": "#f3f6f9",
+        "chart_axis": "#a7b1bd",
+        "card": "#303843",
+        "card_alt": "#394350",
+
+        "series_1": "#6b8fb3",
+        "series_2": "#cda04a",
+        "series_3": "#68a27f",
+        "series_4": "#8f8ad8",
+        "series_5": "#cc7272",
+    },
+
+    "Mineral Mist": {
+        "bg": "#e8ece8",
+        "surface": "#d9e0db",
+        "panel": "#f5f8f5",
+        "border": "#c4cec7",
+        "text": "#2f4338",
+        "muted": "#718478",
+        "primary": "#5c8a73",
+        "primary_hover": "#4e7863",
+        "success": "#4f9367",
+        "warning": "#b89442",
+        "danger": "#bf6a62",
+        "accent": "#8db7a0",
+
+        "chart_bg": "#f5f8f5",
+        "chart_grid": "#d9e1db",
+
+        "chart_text": "#2f4338",
+        "chart_axis": "#718478",
+        "card": "#f5f8f5",
+        "card_alt": "#ebf1ec",
+
+        "series_1": "#5c8a73",
+        "series_2": "#b89442",
+        "series_3": "#4f9367",
+        "series_4": "#7f92b8",
+        "series_5": "#bf6a62",
+    },
+    
     "Midnight": {
         "bg": "#0b1020",
         "surface": "#0f172a",
@@ -114,5 +317,5 @@ THEMES = {
     },
 }
 
-DEFAULT_THEME = "Midnight"
+DEFAULT_THEME = "Executive Gray"
 PALETTE = THEMES[DEFAULT_THEME]
