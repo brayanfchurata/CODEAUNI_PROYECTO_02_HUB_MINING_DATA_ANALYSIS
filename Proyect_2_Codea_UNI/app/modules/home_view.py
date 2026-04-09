@@ -15,7 +15,7 @@ class HomeView(ctk.CTkFrame):
         self.chart_canvases = {}
         self.chart_frames = {}
         self.chart_options = {
-            "Mining": ctk.StringVar(value="Top operadores"),
+            "Mining": ctk.StringVar(value="Turnos"),
             "Geology": ctk.StringVar(value="Boxplot SiO2"),
             "Metallurgy": ctk.StringVar(value="Tendencia sílice"),
             "Maintenance": ctk.StringVar(value="Equipos con fallas"),
@@ -183,9 +183,10 @@ class HomeView(ctk.CTkFrame):
 
         contact_lines = [
             ("Autor", "Brayan Churata"),
-            ("Programa", "CODEa UNI"),
-            ("Versión", "1.0"),
-            ("Correo", "brayan.churata@dataminesoftware.com"),
+            ("Grupo","CodeInMining "),
+            ("Versión", "1.32"),
+            ("Correo", "bchurata3@gmail.com"),
+            ("Número","+51 927 215 240")
         ]
 
         for label, value in contact_lines:
@@ -443,6 +444,35 @@ class HomeView(ctk.CTkFrame):
             "Maintenance": ["Equipos con fallas", "Falla vs no falla", "Distribución métrica"],
         }[module_name]
 
+    def find_column(self, df, candidates):
+        normalized = {str(col).strip().lower(): col for col in df.columns}
+        for cand in candidates:
+            key = cand.strip().lower()
+            if key in normalized:
+                return normalized[key]
+
+        for cand in candidates:
+            key = cand.strip().lower()
+            for norm_name, original in normalized.items():
+                if key in norm_name or norm_name in key:
+                    return original
+        return None
+
+    def to_numeric_series(self, series):
+        return pd.to_numeric(series, errors="coerce")
+
+    def shorten_labels(self, labels, max_len=14):
+        out = []
+        for x in labels:
+            s = str(x)
+            out.append(s if len(s) <= max_len else s[:max_len - 3] + "...")
+        return out
+
+    def empty_chart_message(self, ax, message):
+        ax.text(0.5, 0.5, message, ha="center", va="center", fontsize=11)
+        ax.set_xticks([])
+        ax.set_yticks([])   
+    
     def clear_chart(self, module_name):
         frame = self.chart_frames[module_name]
         for child in frame.winfo_children():
@@ -470,98 +500,194 @@ class HomeView(ctk.CTkFrame):
         df = self.get_dataset(module_name)
         chart_type = self.chart_options[module_name].get()
 
-        fig = Figure(figsize=(5.8, 3.2), dpi=100)
+        fig = Figure(figsize=(6.0, 3.4), dpi=100)
         ax = fig.add_subplot(111)
         self.style_axes(fig, ax)
 
         if df is None or df.empty:
-            ax.text(0.5, 0.5, "Sin datos cargados", ha="center", va="center", fontsize=11)
-            ax.set_xticks([])
-            ax.set_yticks([])
+            self.empty_chart_message(ax, "Sin datos cargados")
         else:
             try:
+                rendered = False
+
                 if module_name == "Mining":
-                    if chart_type == "Top operadores" and {"operator", "M3_volado"}.issubset(df.columns):
-                        grouped = df.groupby("operator")["M3_volado"].mean().sort_values(ascending=False).head(6)
-                        ax.bar(grouped.index.astype(str), grouped.values, color=palette["series_1"])
-                        ax.set_title("Top operadores")
-                        ax.tick_params(axis="x", rotation=18)
+                    operator_col = self.find_column(df, ["operator", "operador"])
+                    shift_col = self.find_column(df, ["shift", "turno"])
+                    m3_col = self.find_column(df, ["M3_volado", "m3_volado", "m3", "volume", "volumen"])
 
-                    elif chart_type == "Turnos" and {"shift", "M3_volado"}.issubset(df.columns):
-                        grouped = df.groupby("shift")["M3_volado"].mean().sort_values(ascending=False)
-                        ax.bar(grouped.index.astype(str), grouped.values, color=palette["series_4"])
-                        ax.set_title("Rendimiento por turno")
+                    if chart_type == "Top operadores" and operator_col and m3_col:
+                        temp = df[[operator_col, m3_col]].copy()
+                        temp[m3_col] = self.to_numeric_series(temp[m3_col])
+                        temp = temp.dropna(subset=[operator_col, m3_col])
 
-                    elif chart_type == "Distribución M3" and "M3_volado" in df.columns:
-                        ax.hist(df["M3_volado"].dropna(), bins=20, color=palette["series_2"])
-                        ax.set_title("Distribución M3_volado")
+                        if not temp.empty:
+                            grouped = temp.groupby(operator_col)[m3_col].mean().sort_values(ascending=False).head(6)
+                            labels = self.shorten_labels(grouped.index.tolist(), 12)
+                            ax.bar(labels, grouped.values, color=palette["series_1"])
+                            ax.set_title("Top operadores")
+                            ax.tick_params(axis="x", rotation=18)
+                            rendered = True
+
+                    elif chart_type == "Turnos" and shift_col and m3_col:
+                        temp = df[[shift_col, m3_col]].copy()
+                        temp[m3_col] = self.to_numeric_series(temp[m3_col])
+                        temp = temp.dropna(subset=[shift_col, m3_col])
+
+                        if not temp.empty:
+                            grouped = temp.groupby(shift_col)[m3_col].mean().sort_values(ascending=False)
+                            labels = self.shorten_labels(grouped.index.tolist(), 12)
+                            ax.bar(labels, grouped.values, color=palette["series_4"])
+                            ax.set_title("Rendimiento por turno")
+                            rendered = True
+
+                    elif chart_type == "Distribución M3" and m3_col:
+                        data = self.to_numeric_series(df[m3_col]).dropna()
+                        if not data.empty:
+                            ax.hist(data, bins=20, color=palette["series_2"])
+                            ax.set_title("Distribución M3")
+                            rendered = True
+
+                    if not rendered:
+                        self.empty_chart_message(ax, "Mining: faltan columnas válidas para esta visual")
 
                 elif module_name == "Geology":
-                    if chart_type == "Boxplot SiO2" and {"rock_name", "SiO2n"}.issubset(df.columns):
-                        common = df["rock_name"].astype(str).value_counts().head(5).index
-                        subset = df[df["rock_name"].astype(str).isin(common)]
-                        data = [subset[subset["rock_name"].astype(str) == r]["SiO2n"].dropna().values for r in common]
-                        ax.boxplot(data, labels=list(common))
-                        ax.set_title("Variabilidad SiO2")
-                        ax.tick_params(axis="x", rotation=18)
+                    rock_col = self.find_column(df, ["rock_name", "rock", "litologia", "lithology"])
+                    sio2_col = self.find_column(df, ["SiO2n", "SiO2", "sio2"])
+                    tio2_col = self.find_column(df, ["TiO2n", "TiO2", "tio2"])
 
-                    elif chart_type == "SiO2 vs TiO2" and {"SiO2n", "TiO2n"}.issubset(df.columns):
-                        sample = df[["SiO2n", "TiO2n"]].dropna().head(1200)
-                        ax.scatter(sample["SiO2n"], sample["TiO2n"], s=12, alpha=0.6, color=palette["series_3"])
-                        ax.set_title("SiO2 vs TiO2")
-                        ax.set_xlabel("SiO2")
-                        ax.set_ylabel("TiO2")
+                    if chart_type == "Boxplot SiO2" and rock_col and sio2_col:
+                        temp = df[[rock_col, sio2_col]].copy()
+                        temp[sio2_col] = self.to_numeric_series(temp[sio2_col])
+                        temp = temp.dropna(subset=[rock_col, sio2_col])
 
-                    elif chart_type == "Top litologías" and {"rock_name", "SiO2n"}.issubset(df.columns):
-                        grouped = df.groupby("rock_name")["SiO2n"].mean().sort_values(ascending=False).head(6)
-                        ax.bar(grouped.index.astype(str), grouped.values, color=palette["series_2"])
-                        ax.set_title("Top litologías")
-                        ax.tick_params(axis="x", rotation=18)
+                        if not temp.empty:
+                            common = temp[rock_col].astype(str).value_counts().head(4).index.tolist()
+                            subset = temp[temp[rock_col].astype(str).isin(common)]
+                            data = [subset[subset[rock_col].astype(str) == r][sio2_col].dropna().values for r in common]
+                            labels = self.shorten_labels(common, 12)
+                            ax.boxplot(data, labels=labels)
+                            ax.set_title("Variabilidad SiO2")
+                            ax.tick_params(axis="x", rotation=15)
+                            rendered = True
+                        else:
+                            rendered = False
+
+                    elif chart_type == "SiO2 vs TiO2" and sio2_col and tio2_col:
+                        temp = df[[sio2_col, tio2_col]].copy()
+                        temp[sio2_col] = self.to_numeric_series(temp[sio2_col])
+                        temp[tio2_col] = self.to_numeric_series(temp[tio2_col])
+                        temp = temp.dropna().head(1200)
+
+                        if not temp.empty:
+                            ax.scatter(temp[sio2_col], temp[tio2_col], s=12, alpha=0.6, color=palette["series_3"])
+                            ax.set_title("SiO2 vs TiO2")
+                            ax.set_xlabel("SiO2")
+                            ax.set_ylabel("TiO2")
+                            rendered = True
+
+                    elif chart_type == "Top litologías" and rock_col and sio2_col:
+                        temp = df[[rock_col, sio2_col]].copy()
+                        temp[sio2_col] = self.to_numeric_series(temp[sio2_col])
+                        temp = temp.dropna(subset=[rock_col, sio2_col])
+
+                        if not temp.empty:
+                            grouped = temp.groupby(rock_col)[sio2_col].mean().sort_values(ascending=False).head(6)
+                            labels = self.shorten_labels(grouped.index.tolist(), 12)
+                            ax.bar(labels, grouped.values, color=palette["series_2"])
+                            ax.set_title("Top litologías")
+                            ax.tick_params(axis="x", rotation=18)
+                            rendered = True
+
+                    if not rendered:
+                        self.empty_chart_message(ax, "Geology: faltan columnas válidas para esta visual")
 
                 elif module_name == "Metallurgy":
-                    if chart_type == "Tendencia sílice" and {"date", "% Silica Concentrate"}.issubset(df.columns):
-                        temp = df[["date", "% Silica Concentrate"]].dropna().copy()
-                        temp["day"] = pd.to_datetime(temp["date"], errors="coerce").dt.date
-                        agg = temp.groupby("day")["% Silica Concentrate"].mean().reset_index()
-                        ax.plot(agg["day"], agg["% Silica Concentrate"], color=palette["series_3"], linewidth=2)
-                        ax.set_title("Tendencia sílice")
-                        ax.tick_params(axis="x", rotation=18)
+                    date_col = self.find_column(df, ["date", "fecha"])
+                    silica_col = self.find_column(df, ["% Silica Concentrate", "silica", "silica concentrate"])
+                    iron_col = self.find_column(df, ["% Iron Concentrate", "iron", "iron concentrate"])
 
-                    elif chart_type == "Hierro vs sílice" and {"% Iron Concentrate", "% Silica Concentrate"}.issubset(df.columns):
-                        sample = df[["% Iron Concentrate", "% Silica Concentrate"]].dropna().head(1200)
-                        ax.scatter(sample["% Iron Concentrate"], sample["% Silica Concentrate"], s=12, alpha=0.6, color=palette["series_1"])
-                        ax.set_title("Hierro vs sílice")
-                        ax.set_xlabel("% Fe")
-                        ax.set_ylabel("% SiO2")
+                    if chart_type == "Tendencia sílice" and date_col and silica_col:
+                        temp = df[[date_col, silica_col]].copy()
+                        temp[silica_col] = self.to_numeric_series(temp[silica_col])
+                        temp[date_col] = pd.to_datetime(temp[date_col], errors="coerce")
+                        temp = temp.dropna(subset=[date_col, silica_col])
 
-                    elif chart_type == "Distribución sílice" and "% Silica Concentrate" in df.columns:
-                        ax.hist(df["% Silica Concentrate"].dropna(), bins=20, color=palette["series_2"])
-                        ax.set_title("Distribución sílice")
+                        if not temp.empty:
+                            agg = temp.groupby(temp[date_col].dt.date)[silica_col].mean().reset_index()
+                            ax.plot(agg[date_col], agg[silica_col], color=palette["series_3"], linewidth=2)
+                            ax.set_title("Tendencia sílice")
+                            ax.tick_params(axis="x", rotation=18)
+                            rendered = True
+
+                    elif chart_type == "Hierro vs sílice" and iron_col and silica_col:
+                        temp = df[[iron_col, silica_col]].copy()
+                        temp[iron_col] = self.to_numeric_series(temp[iron_col])
+                        temp[silica_col] = self.to_numeric_series(temp[silica_col])
+                        temp = temp.dropna().head(1200)
+
+                        if not temp.empty:
+                            ax.scatter(temp[iron_col], temp[silica_col], s=12, alpha=0.6, color=palette["series_1"])
+                            ax.set_title("Hierro vs sílice")
+                            ax.set_xlabel("% Fe")
+                            ax.set_ylabel("% SiO2")
+                            rendered = True
+
+                    elif chart_type == "Distribución sílice" and silica_col:
+                        data = self.to_numeric_series(df[silica_col]).dropna()
+                        if not data.empty:
+                            ax.hist(data, bins=20, color=palette["series_2"])
+                            ax.set_title("Distribución sílice")
+                            rendered = True
+
+                    if not rendered:
+                        self.empty_chart_message(ax, "Metallurgy: faltan columnas válidas para esta visual")
 
                 elif module_name == "Maintenance":
-                    if chart_type == "Equipos con fallas" and {"device", "failure"}.issubset(df.columns):
-                        grouped = df.groupby("device")["failure"].sum().sort_values(ascending=False).head(6)
-                        ax.bar(grouped.index.astype(str), grouped.values, color=palette["series_5"])
-                        ax.set_title("Equipos con fallas")
-                        ax.tick_params(axis="x", rotation=18)
+                    device_col = self.find_column(df, ["device", "equipo"])
+                    failure_col = self.find_column(df, ["failure", "falla"])
+                    metric_cols = [c for c in df.columns if str(c).lower().startswith("metric")]
+                    metric1_col = self.find_column(df, ["metric1"]) if "metric1" in [str(c).lower() for c in df.columns] else (metric_cols[0] if metric_cols else None)
 
-                    elif chart_type == "Falla vs no falla" and {"failure", "metric1"}.issubset(df.columns):
-                        grouped = df.groupby("failure")["metric1"].mean()
-                        labels = ["Sin falla" if i == 0 else "Con falla" for i in grouped.index.tolist()]
-                        ax.bar(labels, grouped.values, color=[palette["series_1"], palette["series_5"]][:len(labels)])
-                        ax.set_title("Metric1 por estado")
+                    if chart_type == "Equipos con fallas" and device_col and failure_col:
+                        temp = df[[device_col, failure_col]].copy()
+                        temp[failure_col] = self.to_numeric_series(temp[failure_col])
+                        temp = temp.dropna(subset=[device_col, failure_col])
 
-                    elif chart_type == "Distribución métrica":
-                        metric_cols = [c for c in df.columns if str(c).lower().startswith("metric")]
-                        if metric_cols:
-                            metric = metric_cols[0]
-                            ax.hist(df[metric].dropna(), bins=20, color=palette["series_4"])
-                            ax.set_title(f"Distribución {metric}")
+                        if not temp.empty:
+                            grouped = temp.groupby(device_col)[failure_col].sum().sort_values(ascending=False).head(6)
+                            labels = self.shorten_labels(grouped.index.tolist(), 12)
+                            ax.bar(labels, grouped.values, color=palette["series_5"])
+                            ax.set_title("Equipos con fallas")
+                            ax.tick_params(axis="x", rotation=18)
+                            rendered = True
+
+                    elif chart_type == "Falla vs no falla" and failure_col and metric1_col:
+                        temp = df[[failure_col, metric1_col]].copy()
+                        temp[failure_col] = self.to_numeric_series(temp[failure_col])
+                        temp[metric1_col] = self.to_numeric_series(temp[metric1_col])
+                        temp = temp.dropna()
+
+                        if not temp.empty:
+                            grouped = temp.groupby(failure_col)[metric1_col].mean()
+                            labels = ["Sin falla" if i == 0 else "Con falla" for i in grouped.index.tolist()]
+                            ax.bar(labels, grouped.values, color=[palette["series_1"], palette["series_5"]][:len(labels)])
+                            ax.set_title("Métrica por estado")
+                            rendered = True
+
+                    elif chart_type == "Distribución métrica" and metric1_col:
+                        data = self.to_numeric_series(df[metric1_col]).dropna()
+                        if not data.empty:
+                            ax.hist(data, bins=20, color=palette["series_4"])
+                            ax.set_title(f"Distribución {metric1_col}")
+                            rendered = True
+
+                    if not rendered:
+                        self.empty_chart_message(ax, "Maintenance: faltan columnas válidas para esta visual")
 
             except Exception:
-                ax.text(0.5, 0.5, "No se pudo renderizar", ha="center", va="center", fontsize=11)
-                ax.set_xticks([])
-                ax.set_yticks([])
+                self.empty_chart_message(ax, "No se pudo renderizar")
+
+        fig.tight_layout(pad=1.2)
 
         canvas = FigureCanvasTkAgg(fig, master=self.chart_frames[module_name])
         canvas.draw()
