@@ -31,6 +31,9 @@ class Proyect2CodeaUNI(ctk.CTk):
         self.content = None
         self.current_view = None
 
+        # cache de vistas
+        self.views = {}
+
         self.build_sidebar()
         self.build_content()
         self.show_view("Inicio")
@@ -59,7 +62,7 @@ class Proyect2CodeaUNI(ctk.CTk):
 
         ctk.CTkLabel(
             self.sidebar,
-            text="Analitica minera integrada",
+            text="Analítica minera integrada",
             text_color=self.palette["muted"],
         ).pack(anchor="w", padx=20, pady=(0, 16))
 
@@ -100,32 +103,53 @@ class Proyect2CodeaUNI(ctk.CTk):
             self.content.grid_rowconfigure(0, weight=1)
             self.content.grid_columnconfigure(0, weight=1)
 
-    def clear_content(self):
-        for child in self.content.winfo_children():
-            child.destroy()
-
     def change_theme(self, theme_name: str):
         self.app_state.set_theme(theme_name)
         self.palette = THEMES[theme_name]
         self.configure(fg_color=self.palette["bg"])
+
+        # destruir vistas cacheadas para recrearlas con el nuevo tema
+        for view in self.views.values():
+            view.destroy()
+
+        self.views = {}
+        self.current_view = None
+
         self.build_sidebar()
         self.show_view(self.app_state.current_module)
 
+    def create_view(self, module_name: str):
+        if module_name == "Inicio":
+            return HomeView(self.content, self.app_state)
+        elif module_name == "Mining":
+            return MiningView(self.content, self.app_state)
+        elif module_name == "Geology":
+            return GeologyView(self.content, self.app_state)
+        elif module_name == "Metallurgy":
+            return MetallurgyView(self.content, self.app_state)
+        elif module_name == "Maintenance":
+            return MaintenanceView(self.content, self.app_state)
+        else:
+            return HomeView(self.content, self.app_state)
+
     def show_view(self, module_name: str):
         self.app_state.set_module(module_name)
-        self.clear_content()
 
-        if module_name == "Inicio":
-            self.current_view = HomeView(self.content)
-        elif module_name == "Mining":
-            self.current_view = MiningView(self.content, self.app_state)
-        elif module_name == "Geology":
-            self.current_view = GeologyView(self.content, self.app_state)
-        elif module_name == "Metallurgy":
-            self.current_view = MetallurgyView(self.content, self.app_state)
-        elif module_name == "Maintenance":
-            self.current_view = MaintenanceView(self.content, self.app_state)
-        else:
-            self.current_view = HomeView(self.content)
+        # La Home siempre se refresca para mostrar el estado actual
+        if module_name == "Inicio" and module_name in self.views:
+            self.views[module_name].destroy()
+            del self.views[module_name]
 
-        self.current_view.grid(row=0, column=0, sticky="nsew")
+        if module_name not in self.views:
+            view = self.create_view(module_name)
+            self.views[module_name] = view
+            view.grid(row=0, column=0, sticky="nsew")
+
+        for name, view in self.views.items():
+            if name == module_name:
+                view.grid()
+                view.tkraise()
+            else:
+                view.grid_remove()
+
+        self.current_view = self.views[module_name]
