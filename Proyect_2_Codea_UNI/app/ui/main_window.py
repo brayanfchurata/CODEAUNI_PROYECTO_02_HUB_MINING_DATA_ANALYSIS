@@ -84,7 +84,7 @@ class Proyect2CodeaUNI(ctk.CTk):
             self.sidebar,
             text="Analítica minera integrada",
             text_color=self.palette["muted"],
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=14),
         ).pack(anchor="w", padx=18, pady=(0, 16))
 
         ctk.CTkLabel(
@@ -129,11 +129,12 @@ class Proyect2CodeaUNI(ctk.CTk):
         ).pack(anchor="w", padx=12, pady=(10, 6))
 
         profile_rows = [
-            ("Autor", "Brayan Churata"),
-            ("Programa", "CODEa UNI"),
-            ("Rol", "Analítica minera"),
-            ("Versión", "1.0"),
-            ("Correo", "brayan.churata@dataminesoftware.com"),
+            ("Autor", "  Brayan Churata"),
+            ("Programa", "  CODEa UNI"),
+            ("Rol", "  Analítica minera"),
+            ("Versión", "  2.73"),
+            ("Correo", "  bchurata3@mail.com"),
+            ("Contacto", "  +51 927 215 240"),
         ]
 
         for label, value in profile_rows:
@@ -146,7 +147,7 @@ class Proyect2CodeaUNI(ctk.CTk):
                 width=58,
                 anchor="w",
                 text_color=self.palette["muted"],
-                font=ctk.CTkFont(size=10),
+                font=ctk.CTkFont(size=12),
             ).pack(side="left")
 
             ctk.CTkLabel(
@@ -156,7 +157,7 @@ class Proyect2CodeaUNI(ctk.CTk):
                 justify="left",
                 wraplength=145,
                 text_color=self.palette["text"],
-                font=ctk.CTkFont(size=10),
+                font=ctk.CTkFont(size=12),
             ).pack(side="left", fill="x", expand=True)
 
         ctk.CTkFrame(profile_card, fg_color="transparent", height=8).pack(fill="x")

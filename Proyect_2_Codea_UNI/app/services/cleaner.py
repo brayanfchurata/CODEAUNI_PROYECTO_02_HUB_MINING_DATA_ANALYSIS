@@ -1,6 +1,6 @@
 import pandas as pd
 
-
+#Sera bueno establecer un log?
 def clean_dataframe(df: pd.DataFrame, options: dict | None = None) -> tuple[pd.DataFrame, dict]:
     if options is None:
         options = {
