@@ -16,10 +16,10 @@ class Proyect2CodeaUNI(ctk.CTk):
         super().__init__()
 
         self.module_icons = {}
+        self.nav_buttons = {}
         self.app_state = AppState()
         self.palette = THEMES[self.app_state.current_theme]
 
-        # Si usas temas claros como Executive Gray:
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
@@ -60,9 +60,11 @@ class Proyect2CodeaUNI(ctk.CTk):
         if self.sidebar is not None:
             self.sidebar.destroy()
 
+        self.nav_buttons = {}
+
         self.sidebar = ctk.CTkFrame(
             self,
-            width=250,
+            width=248,
             corner_radius=0,
             fg_color=self.palette["surface"],
             border_width=1,
@@ -74,21 +76,23 @@ class Proyect2CodeaUNI(ctk.CTk):
         ctk.CTkLabel(
             self.sidebar,
             text=APP_TITLE,
-            font=ctk.CTkFont(size=24, weight="bold"),
+            font=ctk.CTkFont(size=22, weight="bold"),
             text_color=self.palette["text"],
-        ).pack(anchor="w", padx=20, pady=(24, 8))
+        ).pack(anchor="w", padx=18, pady=(22, 8))
 
         ctk.CTkLabel(
             self.sidebar,
             text="Analítica minera integrada",
             text_color=self.palette["muted"],
-        ).pack(anchor="w", padx=20, pady=(0, 16))
+            font=ctk.CTkFont(size=12),
+        ).pack(anchor="w", padx=18, pady=(0, 16))
 
         ctk.CTkLabel(
             self.sidebar,
             text="Tema visual",
             text_color=self.palette["muted"],
-        ).pack(anchor="w", padx=20, pady=(6, 6))
+            font=ctk.CTkFont(size=11),
+        ).pack(anchor="w", padx=18, pady=(6, 6))
 
         theme_menu = ctk.CTkOptionMenu(
             self.sidebar,
@@ -97,9 +101,75 @@ class Proyect2CodeaUNI(ctk.CTk):
             fg_color=self.palette["panel"],
             button_color=self.palette["primary"],
             button_hover_color=self.palette["primary_hover"],
+            text_color=self.palette["text"],
+            font=ctk.CTkFont(size=11),
+            dropdown_fg_color=self.palette["panel"],
+            dropdown_text_color=self.palette["text"],
         )
         theme_menu.set(self.app_state.current_theme)
-        theme_menu.pack(fill="x", padx=14, pady=(0, 16))
+        theme_menu.pack(fill="x", padx=14, pady=(0, 14))
+
+        # =========================
+        # PERFIL / WORKSPACE
+        # =========================
+        profile_card = ctk.CTkFrame(
+            self.sidebar,
+            fg_color=self.palette["panel"],
+            corner_radius=14,
+            border_width=1,
+            border_color=self.palette["border"],
+        )
+        profile_card.pack(fill="x", padx=14, pady=(0, 14))
+
+        ctk.CTkLabel(
+            profile_card,
+            text="Perfil / Workspace",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=self.palette["text"],
+        ).pack(anchor="w", padx=12, pady=(10, 6))
+
+        profile_rows = [
+            ("Autor", "Brayan Churata"),
+            ("Programa", "CODEa UNI"),
+            ("Rol", "Analítica minera"),
+            ("Versión", "1.0"),
+            ("Correo", "brayan.churata@dataminesoftware.com"),
+        ]
+
+        for label, value in profile_rows:
+            row = ctk.CTkFrame(profile_card, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=1)
+
+            ctk.CTkLabel(
+                row,
+                text=f"{label}:",
+                width=58,
+                anchor="w",
+                text_color=self.palette["muted"],
+                font=ctk.CTkFont(size=10),
+            ).pack(side="left")
+
+            ctk.CTkLabel(
+                row,
+                text=value,
+                anchor="w",
+                justify="left",
+                wraplength=145,
+                text_color=self.palette["text"],
+                font=ctk.CTkFont(size=10),
+            ).pack(side="left", fill="x", expand=True)
+
+        ctk.CTkFrame(profile_card, fg_color="transparent", height=8).pack(fill="x")
+
+        # =========================
+        # NAVEGACION
+        # =========================
+        ctk.CTkLabel(
+            self.sidebar,
+            text="Módulos",
+            text_color=self.palette["muted"],
+            font=ctk.CTkFont(size=11),
+        ).pack(anchor="w", padx=18, pady=(2, 6))
 
         for module_name, cfg in MODULE_CONFIG.items():
             icon_img = self.load_module_icon(cfg.get("icon_path"))
@@ -117,9 +187,12 @@ class Proyect2CodeaUNI(ctk.CTk):
                 fg_color=self.palette["panel"],
                 hover_color=self.palette["primary_hover"],
                 text_color=self.palette["text"],
+                height=38,
+                font=ctk.CTkFont(size=12),
                 command=lambda m=module_name: self.show_view(m),
             )
-            btn.pack(fill="x", padx=14, pady=6)
+            btn.pack(fill="x", padx=14, pady=5)
+            self.nav_buttons[module_name] = btn
 
     def build_content(self):
         if self.content is None:
@@ -127,6 +200,21 @@ class Proyect2CodeaUNI(ctk.CTk):
             self.content.grid(row=0, column=1, sticky="nsew")
             self.content.grid_rowconfigure(0, weight=1)
             self.content.grid_columnconfigure(0, weight=1)
+
+    def update_nav_state(self):
+        for module_name, btn in self.nav_buttons.items():
+            if module_name == self.app_state.current_module:
+                btn.configure(
+                    fg_color=self.palette["primary"],
+                    hover_color=self.palette["primary_hover"],
+                    text_color=self.palette["panel"] if self.palette["primary"] != self.palette["panel"] else self.palette["text"],
+                )
+            else:
+                btn.configure(
+                    fg_color=self.palette["panel"],
+                    hover_color=self.palette["primary_hover"],
+                    text_color=self.palette["text"],
+                )
 
     def change_theme(self, theme_name: str):
         self.app_state.set_theme(theme_name)
@@ -179,3 +267,4 @@ class Proyect2CodeaUNI(ctk.CTk):
                 view.grid_remove()
 
         self.current_view = self.views[module_name]
+        self.update_nav_state()
