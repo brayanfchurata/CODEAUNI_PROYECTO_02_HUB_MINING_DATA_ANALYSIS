@@ -81,6 +81,23 @@ class HomeView(ctk.CTkFrame):
             "Metallurgy": palette.get("module_metallurgy", palette["success"]),
             "Maintenance": palette.get("module_maintenance", palette["warning"]),
         }.get(module_name, palette["primary"])
+        
+    def module_title_color(self, module_name):
+        return {
+            "Mining": "#26486B",
+            "Geology": "#304A73",
+            "Metallurgy": "#3F6A54",
+            "Maintenance": "#6E5846",
+        }.get(module_name, self.get_palette()["text"])
+
+
+    def module_border_color(self, module_name):
+        return {
+            "Mining": "#B7C9DD",
+            "Geology": "#BCC9DE",
+            "Metallurgy": "#BFD5C7",
+            "Maintenance": "#D7C6B7",
+        }.get(module_name, self.get_palette()["border"])
 
     def make_card(self, parent, fg_key="card_alt", corner_radius=12, border_key="border_soft"):
         palette = self.get_palette()
@@ -241,18 +258,22 @@ class HomeView(ctk.CTkFrame):
 
         for module_name in ["Mining", "Geology", "Metallurgy", "Maintenance"]:
             accent = self.module_accent(module_name)
+            title_color = self.module_title_color(module_name)
+            border_color = self.module_border_color(module_name)
+
             module_info = status_lookup.get(module_name, {"status": "Sin cargar", "records": "0"})
             status_text = module_info["status"]
             records_text = module_info["records"]
-            status_color = palette["success"] if status_text == "Cargado" else palette["muted"]
+
+            status_color = palette["muted"]
 
             item = ctk.CTkFrame(
                 modules_block,
                 fg_color=palette.get("panel", palette["card"]),
                 corner_radius=10,
                 border_width=1,
-                border_color=palette.get("border_soft", palette["border"]),
-                height=87,
+                border_color=border_color,
+                height=88,
             )
             item.pack(fill="x", pady=4)
             item.pack_propagate(False)
@@ -265,7 +286,7 @@ class HomeView(ctk.CTkFrame):
             ).pack(side="left", fill="y", padx=(0, 8))
 
             content = ctk.CTkFrame(item, fg_color="transparent")
-            content.pack(side="left", fill="both", expand=True, padx=(0, 8), pady=6)
+            content.pack(side="left", fill="both", expand=True, padx=(0, 8), pady=7)
 
             top_row = ctk.CTkFrame(content, fg_color="transparent")
             top_row.pack(fill="x")
@@ -274,7 +295,7 @@ class HomeView(ctk.CTkFrame):
                 top_row,
                 text=module_name,
                 font=ctk.CTkFont(size=13, weight="bold"),
-                text_color=palette["text"],
+                text_color=title_color,
             ).pack(side="left", anchor="w")
 
             ctk.CTkLabel(
@@ -289,9 +310,9 @@ class HomeView(ctk.CTkFrame):
                 text=module_descriptions[module_name],
                 font=ctk.CTkFont(size=11),
                 text_color=palette["muted"],
-                wraplength=205,
+                wraplength=220,
                 justify="left",
-            ).pack(anchor="w", pady=(1, 4))
+            ).pack(anchor="w", pady=(3, 4))
 
             bottom_row = ctk.CTkFrame(content, fg_color="transparent")
             bottom_row.pack(fill="x")
@@ -457,7 +478,8 @@ class HomeView(ctk.CTkFrame):
                 title_box,
                 text=module_name,
                 font=ctk.CTkFont(size=13, weight="bold"),
-                text_color=palette["text"],
+                text_color=self.module_title_color(module_name)
+                #text_color=palette["text"],
             ).pack(side="left", pady=5)
 
             selector = ctk.CTkOptionMenu(
@@ -552,6 +574,7 @@ class HomeView(ctk.CTkFrame):
     def empty_chart_message(self, ax, message, module_name=None):
         palette = self.get_palette()
         accent = self.module_accent(module_name) if module_name else palette["primary"]
+        title_color = self.module_title_color(module_name) if module_name else palette["text"]
 
         ax.text(
             0.5,
@@ -559,9 +582,9 @@ class HomeView(ctk.CTkFrame):
             "Sin datos disponibles",
             ha="center",
             va="center",
-            fontsize=11,
+            fontsize=12,
             fontweight="bold",
-            color=palette.get("empty_state_text", palette["muted"]),
+            color=title_color,
             transform=ax.transAxes,
         )
         ax.text(
@@ -570,7 +593,7 @@ class HomeView(ctk.CTkFrame):
             message,
             ha="center",
             va="center",
-            fontsize=9.5,
+            fontsize=10,
             color=palette.get("muted", palette["text"]),
             transform=ax.transAxes,
         )
@@ -580,7 +603,7 @@ class HomeView(ctk.CTkFrame):
             [0.67, 0.67],
             transform=ax.transAxes,
             color=accent,
-            linewidth=1.8,
+            linewidth=2.0,
             alpha=0.95,
         )
 
@@ -595,7 +618,7 @@ class HomeView(ctk.CTkFrame):
         for child in frame.winfo_children():
             child.destroy()
 
-    def style_axes(self, fig, ax):
+    def style_axes(self, fig, ax, module_name=None):
         palette = self.get_palette()
         fig.patch.set_facecolor(palette.get("chart_bg", palette["panel"]))
         ax.set_facecolor(palette.get("chart_bg", palette["panel"]))
@@ -612,7 +635,7 @@ class HomeView(ctk.CTkFrame):
 
         ax.tick_params(axis="x", colors=palette["chart_text"], labelsize=8.5, pad=2)
         ax.tick_params(axis="y", colors=palette["chart_text"], labelsize=8.5, pad=2)
-        ax.title.set_color(palette["chart_text"])
+        ax.title.set_color(self.module_title_color(module_name) if module_name else palette["chart_text"])
         ax.title.set_fontsize(10.5)
         ax.xaxis.label.set_color(palette["chart_text"])
         ax.yaxis.label.set_color(palette["chart_text"])
@@ -625,7 +648,8 @@ class HomeView(ctk.CTkFrame):
 
         fig = Figure(figsize=(8.6, 5.2), dpi=100)
         ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
+        self.style_axes(fig, ax, module_name)
+       #self.style_axes(fig, ax)
 
         if df is None or df.empty:
             self.empty_chart_message(ax, "Carga un dataset para habilitar esta vista.", module_name)
