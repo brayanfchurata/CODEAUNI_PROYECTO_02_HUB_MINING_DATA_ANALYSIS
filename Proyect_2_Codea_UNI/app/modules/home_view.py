@@ -108,6 +108,26 @@ class HomeView(ctk.CTkFrame):
             border_width=1,
             border_color=palette.get(border_key, palette["border"]),
         )
+        
+    def card_border_color(self, level="default"):
+        palette = self.get_palette()
+        mapping = {
+            "soft": palette.get("border_soft", palette["border"]),
+            "default": palette["border"],
+            "strong": "#C2CEDC",
+            "analytics": "#B9C7D8",
+        }
+        return mapping.get(level, palette["border"])
+
+    def card_background(self, kind="default"):
+        palette = self.get_palette()
+        mapping = {
+            "default": palette.get("card_alt", palette["card"]),
+            "panel": palette.get("panel", palette["card"]),
+            "analytics": "#F7FAFC",
+            "analytics_inner": "#FBFCFD",
+        }
+        return mapping.get(kind, palette.get("card_alt", palette["card"]))
 
     def add_section_title(self, parent, title, subtitle=None, pad_top=10):
         palette = self.get_palette()
@@ -151,8 +171,8 @@ class HomeView(ctk.CTkFrame):
             ctk.CTkLabel(
                 wrap,
                 text=subtitle,
-                font=ctk.CTkFont(size=12),
-                text_color=palette["muted"],
+                font=ctk.CTkFont(size=11),
+                text_color="#7B8CA2",
                 anchor="e",
                 justify="right",
             ).grid(row=0, column=1, sticky="e", padx=(14, 0))
@@ -232,7 +252,13 @@ class HomeView(ctk.CTkFrame):
         left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         left_col.grid_propagate(False)
 
-        modules_card = self.make_card(left_col, fg_key="card_alt")
+        modules_card = ctk.CTkFrame(
+            left_col,
+            fg_color=self.card_background("default"),
+            corner_radius=12,
+            border_width=1,
+            border_color=self.card_border_color("soft"),
+        )
         modules_card.pack(fill="x", pady=(0, 8))
 
         self.add_section_title(
@@ -324,7 +350,13 @@ class HomeView(ctk.CTkFrame):
                 text_color=palette["text"],
             ).pack(side="left", anchor="w")
 
-        insights_card = self.make_card(left_col, fg_key="card_alt")
+        insights_card = ctk.CTkFrame(
+            left_col,
+            fg_color=self.card_background("default"),
+            corner_radius=12,
+            border_width=1,
+            border_color=self.card_border_color("soft"),
+        )
         insights_card.pack(fill="x", pady=(0, 8))
 
         self.add_section_title(insights_card, "Quick Insights")
@@ -374,7 +406,14 @@ class HomeView(ctk.CTkFrame):
         right_col.grid(row=0, column=1, sticky="nsew")
         right_col.grid_rowconfigure(1, weight=1)
 
-        overview_card = self.make_card(right_col, fg_key="card_alt")
+        overview_card = ctk.CTkFrame(
+            right_col,
+            fg_color=self.card_background("default"),
+            corner_radius=12,
+            border_width=1,
+            border_color=self.card_border_color("default"),
+        )
+        #overview_card = self.make_card(right_col, fg_key="card_alt")
         overview_card.pack(fill="x", pady=(0, 8))
 
         self.add_inline_header(
@@ -426,7 +465,14 @@ class HomeView(ctk.CTkFrame):
                 text_color=palette["text"],
             ).pack(anchor="w", padx=10, pady=(0, 6))
 
-        charts_card = self.make_card(right_col, fg_key="card_alt")
+        charts_card = ctk.CTkFrame(
+            right_col,
+            fg_color=self.card_background("analytics"),
+            corner_radius=12,
+            border_width=1,
+            border_color=self.card_border_color("analytics"),
+        )
+        #charts_card = self.make_card(right_col, fg_key="card_alt")
         charts_card.pack(fill="both", expand=True)
 
         self.add_inline_header(
@@ -436,7 +482,8 @@ class HomeView(ctk.CTkFrame):
         )
 
         charts_grid = ctk.CTkFrame(charts_card, fg_color="transparent")
-        charts_grid.pack(fill="both", expand=True, padx=8, pady=(0, 6))
+        charts_grid.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        #charts_grid.pack(fill="both", expand=True, padx=8, pady=(0, 6))
         charts_grid.grid_columnconfigure((0, 1), weight=1)
         charts_grid.grid_rowconfigure((0, 1), weight=1)
 
@@ -448,17 +495,19 @@ class HomeView(ctk.CTkFrame):
 
             chart_card = ctk.CTkFrame(
                 charts_grid,
-                fg_color=palette["panel"],
-                corner_radius=10,
+                fg_color=self.card_background("analytics_inner"),
+                corner_radius=11,
                 border_width=1,
-                border_color=palette.get("border_soft", palette["border"]),
+                border_color=self.card_border_color("default"),
             )
             chart_card.grid(row=row, column=col, sticky="nsew", padx=4, pady=4)
             chart_card.grid_rowconfigure(1, weight=1)
             chart_card.grid_columnconfigure(0, weight=1)
 
-            topbar = ctk.CTkFrame(chart_card, fg_color="transparent", height=34)
-            topbar.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 1))
+            #topbar = ctk.CTkFrame(chart_card, fg_color="transparent", height=34)
+            #topbar.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 1))
+            topbar = ctk.CTkFrame(chart_card, fg_color="transparent", height=36)
+            topbar.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
             topbar.grid_propagate(False)
             topbar.grid_columnconfigure(0, weight=1)
 
@@ -501,10 +550,10 @@ class HomeView(ctk.CTkFrame):
 
             frame = ctk.CTkFrame(
                 chart_card,
-                fg_color=palette.get("panel_2", palette["panel"]),
+                fg_color="#FCFDFE",
                 corner_radius=9,
                 border_width=1,
-                border_color=palette.get("border_soft", palette["border"]),
+                border_color="#D6E0EA",
             )
             frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
             self.chart_frames[module_name] = frame

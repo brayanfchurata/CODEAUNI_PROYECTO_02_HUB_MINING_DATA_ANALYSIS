@@ -123,7 +123,7 @@ class Proyect2CodeaUNI(ctk.CTk):
 
         ctk.CTkLabel(
             profile_card,
-            text="Perfil / Workspace",
+            text="Información del Proyecto",
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=self.palette["text"],
         ).pack(anchor="w", padx=12, pady=(10, 6))
