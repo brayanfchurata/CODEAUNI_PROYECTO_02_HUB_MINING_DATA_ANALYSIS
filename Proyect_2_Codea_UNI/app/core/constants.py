@@ -4,7 +4,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 ASSETS_DIR = BASE_DIR / "assets" / "icons"
 
 APP_TITLE = "MineData Hub"
-APP_SIZE = "1440x900"
+APP_SIZE = "1920x1080"
 APP_ICON = str(ASSETS_DIR / "app.ico")
 
 MODULE_CONFIG = {
