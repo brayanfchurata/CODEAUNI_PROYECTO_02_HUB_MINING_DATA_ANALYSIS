@@ -6,6 +6,7 @@ import customtkinter as ctk
 import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from app.ui.chart_theme import create_figure, style_axes, style_legend
+import numpy as np
 
 from app.core.constants import MODULE_CONFIG
 from app.services.file_loader import load_file
@@ -109,6 +110,44 @@ class MiningView(ctk.CTkScrollableFrame):
     def grade_col(self):
         return "ley"
 
+    def to_numeric_col(self, df, col):
+        if df is None or col not in df.columns:
+            return pd.Series(dtype="float64")
+        return pd.to_numeric(df[col], errors="coerce")
+
+    def render_chart_placeholder(self, frame, title, subtitle="No hay datos suficientes para esta visual."):
+        self.clear_chart_frame(frame)
+        palette = self.get_palette()
+
+        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
+        ax = fig.add_subplot(111)
+        style_axes(fig, ax, palette)
+
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        ax.text(
+            0.5, 0.58, title,
+            ha="center", va="center",
+            fontsize=12, fontweight="bold",
+            color=palette["text"],
+            transform=ax.transAxes
+        )
+        ax.text(
+            0.5, 0.46, subtitle,
+            ha="center", va="center",
+            fontsize=10,
+            color=palette["muted"],
+            transform=ax.transAxes
+        )
+
+        for spine in ax.spines.values():
+            spine.set_color(palette["border"])
+
+        canvas = FigureCanvasTkAgg(fig, master=frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)    
+    
     # -------------------------------------------------
     # UI
     # -------------------------------------------------
@@ -730,24 +769,85 @@ class MiningView(ctk.CTkScrollableFrame):
         x, y = self.x_var.get(), self.y_var.get()
         palette = self.get_palette()
 
+        if x not in df.columns or y not in df.columns:
+            self.render_chart_placeholder(self.scatter_frame, "Tiempo vs rendimiento", "Selecciona variables válidas.")
+            return
+
+        temp = pd.DataFrame({
+            x: self.to_numeric_col(df, x),
+            y: self.to_numeric_col(df, y)
+        })
+
+        if "shift" in df.columns:
+            temp["shift"] = df["shift"].astype(str)
+
+        temp = temp.dropna().head(2500)
+
+        if temp.empty or temp[x].nunique() < 2 or temp[y].nunique() < 2:
+            self.render_chart_placeholder(self.scatter_frame, "Tiempo vs rendimiento")
+            return
+
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if {x, y}.issubset(df.columns):
-            sample = df[[x, y]].dropna().head(2000)
+        shift_colors = [
+            palette.get("series_1", "#4F81BD"),
+            palette.get("series_2", "#C0504D"),
+            palette.get("series_3", "#9BBB59"),
+            palette.get("series_4", "#8064A2"),
+            palette.get("series_5", "#4BACC6"),
+        ]
 
+        used_legend = False
+        if "shift" in temp.columns and temp["shift"].nunique() > 1:
+            for idx, (shift_name, grp) in enumerate(temp.groupby("shift")):
+                ax.scatter(
+                    grp[x], grp[y],
+                    s=20,
+                    alpha=0.68,
+                    color=shift_colors[idx % len(shift_colors)],
+                    edgecolors="none",
+                    label=str(shift_name),
+                )
+            used_legend = True
+        else:
             ax.scatter(
-                sample[x],
-                sample[y],
-                s=18,
-                alpha=0.72,
+                temp[x], temp[y],
+                s=20,
+                alpha=0.70,
                 color=palette["series_1"],
-                edgecolors="none"
+                edgecolors="none",
             )
-            ax.set_title(f"{x} vs {y}")
-            ax.set_xlabel(x)
-            ax.set_ylabel(y)
+
+        # Línea de tendencia
+        coef = np.polyfit(temp[x], temp[y], 1)
+        x_line = np.linspace(temp[x].min(), temp[x].max(), 100)
+        y_line = coef[0] * x_line + coef[1]
+        ax.plot(
+            x_line,
+            y_line,
+            color=palette["series_5"],
+            linewidth=2.2,
+            alpha=0.95,
+        )
+
+        corr = temp[x].corr(temp[y])
+        ax.set_title(f"{x} vs {y}")
+        ax.set_xlabel(x)
+        ax.set_ylabel(y)
+
+        ax.text(
+            0.98, 0.96,
+            f"r = {corr:.3f}",
+            ha="right", va="top",
+            fontsize=9,
+            color=palette["muted"],
+            transform=ax.transAxes,
+        )
+
+        if used_legend:
+            ax.legend(loc="best", frameon=False, fontsize=8)
 
         canvas = FigureCanvasTkAgg(fig, master=self.scatter_frame)
         canvas.draw()
@@ -759,35 +859,57 @@ class MiningView(ctk.CTkScrollableFrame):
         metric = self.metric_var.get()
         palette = self.get_palette()
 
+        if "operator" not in df.columns or metric not in df.columns:
+            self.render_chart_placeholder(self.bar_frame, "Top operadores")
+            return
+
+        temp = df.copy()
+        temp[metric] = self.to_numeric_col(temp, metric)
+        temp = temp.dropna(subset=["operator", metric])
+
+        if temp.empty:
+            self.render_chart_placeholder(self.bar_frame, "Top operadores")
+            return
+
+        grouped = (
+            temp.groupby("operator")[metric]
+            .mean()
+            .sort_values(ascending=False)
+            .head(self.safe_top_n())
+            .sort_values(ascending=True)
+        )
+
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if "operator" in df.columns and metric in df.columns:
-            grouped = (
-                df.groupby("operator")[metric]
-                .mean(numeric_only=True)
-                .sort_values(ascending=False)
-                .head(self.safe_top_n())
+        bars = ax.barh(
+            grouped.index.astype(str),
+            grouped.values,
+            color=palette["series_2"],
+            edgecolor=palette["accent"],
+            alpha=0.88,
+        )
+
+        if len(bars) > 0:
+            bars[-1].set_color(palette["series_5"])
+
+        ax.set_title(f"Top {self.safe_top_n()} operadores por {metric}")
+        ax.set_xlabel(metric)
+        ax.set_ylabel("Operador")
+
+        max_val = grouped.max() if len(grouped) else 0
+        offset = max_val * 0.02 if max_val else 0.1
+
+        for bar, value in zip(bars, grouped.values):
+            ax.text(
+                value + offset,
+                bar.get_y() + bar.get_height() / 2,
+                f"{value:.2f}",
+                va="center",
+                fontsize=8.5,
+                color=palette["text"],
             )
-
-            bars = ax.bar(
-                grouped.index.astype(str),
-                grouped.values,
-                color=palette["series_2"],
-                edgecolor=palette["accent"]
-            )
-
-            if len(bars) > 0:
-                bars[0].set_color(palette["series_5"])
-
-            ax.set_title(f"Top {self.safe_top_n()} operadores por {metric}")
-
-            for label in ax.get_xticklabels():
-                label.set_rotation(35)
-                label.set_ha("right")
-
-            ax.margins(x=0.05)
 
         canvas = FigureCanvasTkAgg(fig, master=self.bar_frame)
         canvas.draw()
@@ -799,61 +921,112 @@ class MiningView(ctk.CTkScrollableFrame):
         metric = self.metric_var.get()
         palette = self.get_palette()
 
+        if "shift" not in df.columns or metric not in df.columns:
+            self.render_chart_placeholder(self.shift_frame, "Comparación por turno")
+            return
+
+        temp = df.copy()
+        temp[metric] = self.to_numeric_col(temp, metric)
+        temp["shift"] = temp["shift"].astype(str)
+        temp = temp.dropna(subset=["shift", metric])
+
+        if temp.empty:
+            self.render_chart_placeholder(self.shift_frame, "Comparación por turno")
+            return
+
+        order = (
+            temp.groupby("shift")[metric]
+            .mean()
+            .sort_values(ascending=False)
+            .index.tolist()
+        )
+
+        series_data = [
+            temp.loc[temp["shift"] == shift_name, metric].values
+            for shift_name in order
+        ]
+
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if "shift" in df.columns and metric in df.columns:
-            grouped = (
-                df.groupby("shift")[metric]
-                .mean(numeric_only=True)
-                .sort_values(ascending=False)
-            )
+        bp = ax.boxplot(
+            series_data,
+            labels=order,
+            patch_artist=True,
+            widths=0.58,
+        )
 
-            bars = ax.bar(
-                grouped.index.astype(str),
-                grouped.values,
-                color=palette["series_3"],
-                edgecolor=palette["accent"]
-            )
+        box_colors = [
+            palette["series_3"],
+            palette["series_4"],
+            palette["series_2"],
+            palette["series_1"],
+            palette["series_5"],
+        ]
 
-            if len(bars) > 0:
-                bars[0].set_color(palette["series_5"])
+        for i, box in enumerate(bp["boxes"]):
+            box.set_facecolor(box_colors[i % len(box_colors)])
+            box.set_alpha(0.55)
+            box.set_edgecolor(palette["accent"])
 
-            ax.set_title(f"Comparación por turno: {metric}")
+        for median in bp["medians"]:
+            median.set_color(palette["text"])
+            median.set_linewidth(1.5)
 
-            for label in ax.get_xticklabels():
-                label.set_rotation(20)
-                label.set_ha("right")
+        for whisker in bp["whiskers"]:
+            whisker.set_color(palette["muted"])
 
-            ax.margins(x=0.05)
+        for cap in bp["caps"]:
+            cap.set_color(palette["muted"])
+
+        ax.set_title(f"Distribución por turno: {metric}")
+        ax.set_xlabel("Turno")
+        ax.set_ylabel(metric)
 
         canvas = FigureCanvasTkAgg(fig, master=self.shift_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
-
+        
+        
     def render_hist_chart(self):
         self.clear_chart_frame(self.hist_frame)
         df = self.get_filtered_df()
         metric = self.metric_var.get()
         palette = self.get_palette()
 
+        if metric not in df.columns:
+            self.render_chart_placeholder(self.hist_frame, "Distribución del indicador")
+            return
+
+        data = self.to_numeric_col(df, metric).dropna()
+
+        if data.empty:
+            self.render_chart_placeholder(self.hist_frame, "Distribución del indicador")
+            return
+
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if metric in df.columns:
-            data = df[metric].dropna()
+        ax.hist(
+            data,
+            bins=28,
+            color=palette["series_1"],
+            alpha=0.82,
+            edgecolor=palette["chart_axis"]
+        )
 
-            ax.hist(
-                data,
-                bins=30,
-                color=palette["series_1"],
-                alpha=0.80,
-                edgecolor=palette["chart_axis"]
-            )
-            ax.set_title(f"Distribución de {metric}")
-            ax.set_xlabel(metric)
+        mean_val = data.mean()
+        median_val = data.median()
+
+        ax.axvline(mean_val, color=palette["series_5"], linewidth=2.0, linestyle="-", label=f"Media {mean_val:.2f}")
+        ax.axvline(median_val, color=palette["series_2"], linewidth=1.8, linestyle="--", label=f"Mediana {median_val:.2f}")
+
+        ax.set_title(f"Distribución de {metric}")
+        ax.set_xlabel(metric)
+        ax.set_ylabel("Frecuencia")
+        ax.legend(frameon=False, fontsize=8)
 
         canvas = FigureCanvasTkAgg(fig, master=self.hist_frame)
         canvas.draw()
@@ -890,35 +1063,65 @@ class MiningView(ctk.CTkScrollableFrame):
         metric = self.metric_var.get()
         palette = self.get_palette()
 
+        if "operator" not in df.columns or metric not in df.columns:
+            self.render_chart_placeholder(
+                self.report_chart_frame,
+                "Visual principal de soporte",
+                "No hay datos suficientes para construir el reporte."
+            )
+            return
+
+        temp = df.copy()
+        temp[metric] = self.to_numeric_col(temp, metric)
+        temp = temp.dropna(subset=["operator", metric])
+
+        if temp.empty:
+            self.render_chart_placeholder(
+                self.report_chart_frame,
+                "Visual principal de soporte",
+                "No hay datos suficientes para construir el reporte."
+            )
+            return
+
+        grouped = (
+            temp.groupby("operator")[metric]
+            .mean()
+            .sort_values(ascending=False)
+            .head(self.safe_top_n())
+            .sort_values(ascending=True)
+        )
+
         fig = create_figure(palette, figsize=(7.2, 4.2), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if "operator" in df.columns and metric in df.columns:
-            grouped = (
-                df.groupby("operator")[metric]
-                .mean(numeric_only=True)
-                .sort_values(ascending=False)
-                .head(self.safe_top_n())
+        bars = ax.barh(
+            grouped.index.astype(str),
+            grouped.values,
+            color=palette["series_2"],
+            edgecolor=palette["accent"],
+            alpha=0.90,
+        )
+
+        if len(bars) > 0:
+            bars[-1].set_color(palette["series_5"])
+
+        ax.set_title(f"Operadores líderes por {metric}")
+        ax.set_xlabel(metric)
+        ax.set_ylabel("Operador")
+
+        max_val = grouped.max() if len(grouped) else 0
+        offset = max_val * 0.02 if max_val else 0.1
+
+        for bar, value in zip(bars, grouped.values):
+            ax.text(
+                value + offset,
+                bar.get_y() + bar.get_height() / 2,
+                f"{value:.2f}",
+                va="center",
+                fontsize=8.5,
+                color=palette["text"],
             )
-
-            bars = ax.bar(
-                grouped.index.astype(str),
-                grouped.values,
-                color=palette["series_2"],
-                edgecolor=palette["accent"]
-            )
-
-            if len(bars) > 0:
-                bars[0].set_color(palette["series_5"])
-
-            ax.set_title(f"Operadores líderes por {metric}")
-
-            for label in ax.get_xticklabels():
-                label.set_rotation(35)
-                label.set_ha("right")
-
-            ax.margins(x=0.05)
 
         canvas = FigureCanvasTkAgg(fig, master=self.report_chart_frame)
         canvas.draw()

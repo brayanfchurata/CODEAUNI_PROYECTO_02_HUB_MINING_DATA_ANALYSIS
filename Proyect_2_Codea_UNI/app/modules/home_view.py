@@ -17,7 +17,7 @@ class HomeView(ctk.CTkFrame):
             "Mining": ctk.StringVar(value="Top operadores"),
             "Geology": ctk.StringVar(value="Boxplot SiO2"),
             "Metallurgy": ctk.StringVar(value="Tendencia sílice"),
-            "Maintenance": ctk.StringVar(value="Equipos con fallas"),
+            "Maintenance": ctk.StringVar(value="Equipos críticos"),
         }
         self.build_ui()
 
@@ -81,7 +81,7 @@ class HomeView(ctk.CTkFrame):
             "Metallurgy": palette.get("module_metallurgy", palette["success"]),
             "Maintenance": palette.get("module_maintenance", palette["warning"]),
         }.get(module_name, palette["primary"])
-        
+
     def module_title_color(self, module_name):
         return {
             "Mining": "#26486B",
@@ -89,7 +89,6 @@ class HomeView(ctk.CTkFrame):
             "Metallurgy": "#3F6A54",
             "Maintenance": "#6E5846",
         }.get(module_name, self.get_palette()["text"])
-
 
     def module_border_color(self, module_name):
         return {
@@ -108,7 +107,7 @@ class HomeView(ctk.CTkFrame):
             border_width=1,
             border_color=palette.get(border_key, palette["border"]),
         )
-        
+
     def card_border_color(self, level="default"):
         palette = self.get_palette()
         mapping = {
@@ -181,7 +180,6 @@ class HomeView(ctk.CTkFrame):
         palette = self.get_palette()
         status_info = self.module_status_data()
 
-        # TOP BAND
         top_band = ctk.CTkFrame(self, fg_color="transparent")
         top_band.pack(fill="x", padx=12, pady=(10, 8))
         top_band.grid_columnconfigure(0, weight=3)
@@ -240,14 +238,12 @@ class HomeView(ctk.CTkFrame):
             justify="left",
         ).pack(anchor="w", padx=12, pady=(0, 8))
 
-        # BODY
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=12, pady=(0, 10))
         body.grid_columnconfigure(0, weight=0)
         body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
-        # LEFT RAIL
         left_col = ctk.CTkFrame(body, fg_color="transparent", width=295)
         left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         left_col.grid_propagate(False)
@@ -273,8 +269,8 @@ class HomeView(ctk.CTkFrame):
         module_descriptions = {
             "Mining": "Perforación, voladura y productividad",
             "Geology": "Geoquímica de rocas y óxidos",
-            "Metallurgy": "Flotación y control de sílice",
-            "Maintenance": "Monitoreo de equipos y fallas",
+            "Metallurgy": "Flotación, sílice y estabilidad",
+            "Maintenance": "Criticidad, riesgo y señales de falla",
         }
 
         status_lookup = {
@@ -401,7 +397,6 @@ class HomeView(ctk.CTkFrame):
                 font=ctk.CTkFont(size=14, weight="bold"),
             ).pack(anchor="w", padx=8, pady=(0, 8))
 
-        # RIGHT ANALYTICS
         right_col = ctk.CTkFrame(body, fg_color="transparent")
         right_col.grid(row=0, column=1, sticky="nsew")
         right_col.grid_rowconfigure(1, weight=1)
@@ -413,7 +408,6 @@ class HomeView(ctk.CTkFrame):
             border_width=1,
             border_color=self.card_border_color("default"),
         )
-        #overview_card = self.make_card(right_col, fg_key="card_alt")
         overview_card.pack(fill="x", pady=(0, 8))
 
         self.add_inline_header(
@@ -472,7 +466,6 @@ class HomeView(ctk.CTkFrame):
             border_width=1,
             border_color=self.card_border_color("analytics"),
         )
-        #charts_card = self.make_card(right_col, fg_key="card_alt")
         charts_card.pack(fill="both", expand=True)
 
         self.add_inline_header(
@@ -483,7 +476,6 @@ class HomeView(ctk.CTkFrame):
 
         charts_grid = ctk.CTkFrame(charts_card, fg_color="transparent")
         charts_grid.pack(fill="both", expand=True, padx=10, pady=(0, 8))
-        #charts_grid.pack(fill="both", expand=True, padx=8, pady=(0, 6))
         charts_grid.grid_columnconfigure((0, 1), weight=1)
         charts_grid.grid_rowconfigure((0, 1), weight=1)
 
@@ -504,8 +496,6 @@ class HomeView(ctk.CTkFrame):
             chart_card.grid_rowconfigure(1, weight=1)
             chart_card.grid_columnconfigure(0, weight=1)
 
-            #topbar = ctk.CTkFrame(chart_card, fg_color="transparent", height=34)
-            #topbar.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 1))
             topbar = ctk.CTkFrame(chart_card, fg_color="transparent", height=36)
             topbar.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
             topbar.grid_propagate(False)
@@ -528,7 +518,6 @@ class HomeView(ctk.CTkFrame):
                 text=module_name,
                 font=ctk.CTkFont(size=13, weight="bold"),
                 text_color=self.module_title_color(module_name)
-                #text_color=palette["text"],
             ).pack(side="left", pady=5)
 
             selector = ctk.CTkOptionMenu(
@@ -536,7 +525,7 @@ class HomeView(ctk.CTkFrame):
                 values=self.get_chart_options(module_name),
                 variable=self.chart_options[module_name],
                 command=lambda _, m=module_name: self.render_module_chart(m),
-                width=140,
+                width=155,
                 height=28,
                 fg_color=palette["primary"],
                 button_color=palette["primary"],
@@ -565,8 +554,18 @@ class HomeView(ctk.CTkFrame):
         return {
             "Mining": ["Top operadores", "Turnos", "Distribución M3"],
             "Geology": ["Boxplot SiO2", "SiO2 vs TiO2", "Top litologías"],
-            "Metallurgy": ["Tendencia sílice", "Hierro vs sílice", "Distribución sílice"],
-            "Maintenance": ["Equipos con fallas", "Falla vs no falla", "Distribución métrica"],
+            "Metallurgy": [
+                "Tendencia sílice",
+                "Hierro vs sílice",
+                "Variables asociadas",
+                "Estabilidad proceso",
+            ],
+            "Maintenance": [
+                "Equipos críticos",
+                "Tendencia de falla",
+                "Métricas discriminantes",
+                "Comparación métrica foco",
+            ],
         }[module_name]
 
     def find_column(self, df, candidates):
@@ -593,22 +592,125 @@ class HomeView(ctk.CTkFrame):
             out.append(s if len(s) <= max_len else s[: max_len - 3] + "...")
         return out
 
+    def get_failure_series(self, df):
+        if df is None or "failure" not in df.columns:
+            return pd.Series(dtype="int64")
+
+        s = df["failure"].copy()
+        if pd.api.types.is_numeric_dtype(s):
+            return pd.to_numeric(s, errors="coerce").fillna(0).astype(int)
+
+        mapped = (
+            s.astype(str)
+            .str.strip()
+            .str.lower()
+            .map(
+                {
+                    "1": 1,
+                    "0": 0,
+                    "true": 1,
+                    "false": 0,
+                    "yes": 1,
+                    "no": 0,
+                    "si": 1,
+                    "sí": 1,
+                }
+            )
+        )
+        return mapped.fillna(0).astype(int)
+
+    def maintenance_metric_columns(self, df):
+        if df is None:
+            return []
+        return [c for c in df.columns if str(c).lower().startswith("metric")]
+
+    def maintenance_metric_effects(self, df):
+        if df is None or df.empty or "failure" not in df.columns:
+            return pd.DataFrame()
+
+        metric_cols = self.maintenance_metric_columns(df)
+        if not metric_cols:
+            return pd.DataFrame()
+
+        failure = self.get_failure_series(df)
+        rows = []
+
+        for col in metric_cols:
+            series = pd.to_numeric(df[col], errors="coerce")
+            valid = pd.DataFrame({"metric": series, "failure": failure}).dropna()
+
+            if valid.empty or valid["failure"].nunique() < 2:
+                continue
+
+            fail_values = valid.loc[valid["failure"] == 1, "metric"]
+            ok_values = valid.loc[valid["failure"] == 0, "metric"]
+
+            if fail_values.empty or ok_values.empty:
+                continue
+
+            mean_fail = fail_values.mean()
+            mean_ok = ok_values.mean()
+            delta = mean_fail - mean_ok
+            std_ref = valid["metric"].std()
+            effect = delta / std_ref if pd.notna(std_ref) and std_ref not in (0, 0.0) else 0.0
+
+            rows.append(
+                {
+                    "metric": col,
+                    "effect_size": effect,
+                    "abs_effect_size": abs(effect),
+                    "mean_fail": mean_fail,
+                    "mean_ok": mean_ok,
+                }
+            )
+
+        if not rows:
+            return pd.DataFrame()
+
+        return pd.DataFrame(rows).sort_values("abs_effect_size", ascending=False)
+
+    def maintenance_device_summary(self, df):
+        if df is None or df.empty or "device" not in df.columns or "failure" not in df.columns:
+            return pd.DataFrame()
+
+        temp = df.copy()
+        temp["failure_num"] = self.get_failure_series(df)
+
+        grouped = temp.groupby("device").agg(
+            records=("failure_num", "count"),
+            failures=("failure_num", "sum"),
+            failure_rate=("failure_num", "mean"),
+        ).reset_index()
+
+        grouped["criticality_score"] = (
+            grouped["failures"] * 0.65
+            + grouped["failure_rate"] * 100 * 0.35
+        )
+
+        return grouped.sort_values(["criticality_score", "failures", "failure_rate"], ascending=False)
+
     def apply_chart_margins(self, fig, ax, chart_type):
         ax.margins(x=0.04)
 
-        if chart_type in {"Top operadores", "Turnos", "Top litologías", "Equipos con fallas"}:
+        if chart_type in {
+            "Top operadores", "Turnos", "Top litologías", "Equipos con fallas",
+            "Variables asociadas", "Equipos críticos", "Métricas discriminantes"
+        }:
             for label in ax.get_xticklabels():
-                label.set_rotation(18)
+                label.set_rotation(18 if chart_type not in {"Variables asociadas", "Métricas discriminantes"} else 30)
                 label.set_ha("right")
-            fig.subplots_adjust(left=0.08, right=0.985, top=0.88, bottom=0.28)
+            fig.subplots_adjust(
+                left=0.08, right=0.985, top=0.88,
+                bottom=0.30 if chart_type in {"Variables asociadas", "Métricas discriminantes"} else 0.28
+            )
 
-        elif chart_type in {"Boxplot SiO2"}:
+        elif chart_type in {"Boxplot SiO2", "Comparación métrica foco"}:
             for label in ax.get_xticklabels():
                 label.set_rotation(10)
                 label.set_ha("right")
             fig.subplots_adjust(left=0.08, right=0.985, top=0.88, bottom=0.24)
 
-        elif chart_type in {"Tendencia sílice"}:
+        elif chart_type in {"Tendencia sílice", "Tendencia de falla"}:
             for label in ax.get_xticklabels():
                 label.set_rotation(18)
                 label.set_ha("right")
@@ -616,6 +718,9 @@ class HomeView(ctk.CTkFrame):
 
         elif chart_type in {"SiO2 vs TiO2", "Hierro vs sílice"}:
             fig.subplots_adjust(left=0.10, right=0.985, top=0.88, bottom=0.16)
+
+        elif chart_type in {"Estabilidad proceso"}:
+            fig.subplots_adjust(left=0.10, right=0.985, top=0.88, bottom=0.18)
 
         else:
             fig.subplots_adjust(left=0.08, right=0.985, top=0.88, bottom=0.18)
@@ -698,7 +803,6 @@ class HomeView(ctk.CTkFrame):
         fig = Figure(figsize=(8.6, 5.2), dpi=100)
         ax = fig.add_subplot(111)
         self.style_axes(fig, ax, module_name)
-       #self.style_axes(fig, ax)
 
         if df is None or df.empty:
             self.empty_chart_message(ax, "Carga un dataset para habilitar esta vista.", module_name)
@@ -805,72 +909,224 @@ class HomeView(ctk.CTkFrame):
                         temp = temp.dropna(subset=[date_col, silica_col])
 
                         if not temp.empty:
-                            agg = temp.groupby(temp[date_col].dt.date)[silica_col].mean().reset_index()
-                            ax.plot(agg.iloc[:, 0], agg.iloc[:, 1], color=palette["series_3"], linewidth=2.1)
+                            temp["day"] = temp[date_col].dt.date
+                            agg = temp.groupby("day", as_index=False)[silica_col].mean()
+                            agg["rolling_5"] = agg[silica_col].rolling(window=5, min_periods=2).mean()
+
+                            ax.plot(
+                                agg["day"],
+                                agg[silica_col],
+                                color=palette["series_3"],
+                                linewidth=1.9,
+                                alpha=0.75,
+                                label="Promedio diario",
+                            )
+                            ax.plot(
+                                agg["day"],
+                                agg["rolling_5"],
+                                color=palette["series_2"],
+                                linewidth=2.2,
+                                alpha=0.95,
+                                label="Media móvil 5",
+                            )
+
+                            mean_value = agg[silica_col].mean()
+                            if pd.notna(mean_value):
+                                ax.axhline(
+                                    mean_value,
+                                    color=palette["series_5"],
+                                    linestyle="--",
+                                    linewidth=1.3,
+                                    alpha=0.85,
+                                )
+
                             ax.set_title("Tendencia sílice")
+                            ax.set_xlabel("Fecha")
+                            ax.set_ylabel("% SiO2")
+                            ax.legend(fontsize=8)
                             rendered = True
 
                     elif chart_type == "Hierro vs sílice" and iron_col and silica_col:
                         temp = df[[iron_col, silica_col]].copy()
                         temp[iron_col] = self.to_numeric_series(temp[iron_col])
                         temp[silica_col] = self.to_numeric_series(temp[silica_col])
-                        temp = temp.dropna().head(1400)
+                        temp = temp.dropna().head(1800)
 
                         if not temp.empty:
+                            corr_value = temp[[iron_col, silica_col]].corr(numeric_only=True).iloc[0, 1]
                             ax.scatter(temp[iron_col], temp[silica_col], s=14, alpha=0.6, color=palette["series_1"])
-                            ax.set_title("Hierro vs sílice")
+                            ax.set_title(f"Hierro vs sílice | Corr: {corr_value:.3f}")
                             ax.set_xlabel("% Fe")
                             ax.set_ylabel("% SiO2")
                             rendered = True
 
-                    elif chart_type == "Distribución sílice" and silica_col:
+                    elif chart_type == "Variables asociadas" and silica_col:
+                        numeric_df = df.copy()
+                        numeric_candidates = []
+                        for col in numeric_df.columns:
+                            try:
+                                series = pd.to_numeric(numeric_df[col], errors="coerce")
+                                if series.notna().sum() >= 20 and series.nunique(dropna=True) > 1:
+                                    numeric_candidates.append(col)
+                            except Exception:
+                                continue
+
+                        if silica_col in numeric_candidates and len(numeric_candidates) >= 2:
+                            corr = numeric_df[numeric_candidates].apply(pd.to_numeric, errors="coerce").corr(numeric_only=True)[silica_col].dropna()
+                            corr = corr.drop(labels=[silica_col], errors="ignore")
+                            corr = corr.sort_values(key=lambda s: s.abs(), ascending=False).head(6)
+
+                            if not corr.empty:
+                                colors = [palette["series_3"] if v >= 0 else palette["series_5"] for v in corr.values]
+                                ax.bar(corr.index.astype(str), corr.values, color=colors, edgecolor=palette["accent"], alpha=0.88)
+                                ax.axhline(0, color=palette["chart_axis"], linewidth=1.0, alpha=0.9)
+                                ax.set_title("Variables asociadas a sílice")
+                                ax.set_ylabel("Correlación")
+                                rendered = True
+
+                    elif chart_type == "Estabilidad proceso" and silica_col:
                         data = self.to_numeric_series(df[silica_col]).dropna()
-                        if not data.empty:
-                            ax.hist(data, bins=20, color=palette["series_2"])
-                            ax.set_title("Distribución sílice")
-                            rendered = True
+
+                        if len(data) >= 12:
+                            rolling_std = data.rolling(window=5, min_periods=3).std().dropna()
+                            if not rolling_std.empty:
+                                ax.plot(
+                                    rolling_std.index,
+                                    rolling_std.values,
+                                    color=palette["series_3"],
+                                    linewidth=2.0,
+                                    alpha=0.92,
+                                )
+
+                                mean_std = rolling_std.mean()
+                                if pd.notna(mean_std):
+                                    ax.axhline(
+                                        mean_std,
+                                        color=palette["series_2"],
+                                        linestyle="--",
+                                        linewidth=1.3,
+                                        alpha=0.9,
+                                    )
+
+                                ax.set_title("Estabilidad del proceso")
+                                ax.set_xlabel("Ventanas sucesivas")
+                                ax.set_ylabel("Std móvil sílice")
+                                rendered = True
 
                     if not rendered:
                         self.empty_chart_message(ax, "Metallurgy: faltan columnas válidas.", module_name)
 
                 elif module_name == "Maintenance":
-                    device_col = self.find_column(df, ["device", "equipo"])
-                    failure_col = self.find_column(df, ["failure", "falla"])
-                    metric_cols = [c for c in df.columns if str(c).lower().startswith("metric")]
-                    metric1_col = self.find_column(df, ["metric1"]) if "metric1" in [str(c).lower() for c in df.columns] else (metric_cols[0] if metric_cols else None)
-
-                    if chart_type == "Equipos con fallas" and device_col and failure_col:
-                        temp = df[[device_col, failure_col]].copy()
-                        temp[failure_col] = self.to_numeric_series(temp[failure_col])
-                        temp = temp.dropna(subset=[device_col, failure_col])
-
-                        if not temp.empty:
-                            grouped = temp.groupby(device_col)[failure_col].sum().sort_values(ascending=False).head(6)
-                            labels = self.shorten_labels(grouped.index.tolist(), 13)
-                            ax.bar(labels, grouped.values, color=palette["series_5"])
-                            ax.set_title("Equipos con fallas")
+                    if chart_type == "Equipos críticos":
+                        summary = self.maintenance_device_summary(df)
+                        if not summary.empty:
+                            top = summary.head(6)
+                            bars = ax.bar(
+                                top["device"].astype(str),
+                                top["criticality_score"],
+                                color=palette["series_2"],
+                                edgecolor=palette["accent"],
+                                alpha=0.88,
+                            )
+                            if len(bars) > 0:
+                                bars[0].set_color(palette["series_5"])
+                            ax.set_title("Equipos críticos")
+                            ax.set_ylabel("Score de criticidad")
                             rendered = True
 
-                    elif chart_type == "Falla vs no falla" and failure_col and metric1_col:
-                        temp = df[[failure_col, metric1_col]].copy()
-                        temp[failure_col] = self.to_numeric_series(temp[failure_col])
-                        temp[metric1_col] = self.to_numeric_series(temp[metric1_col])
-                        temp = temp.dropna()
+                    elif chart_type == "Tendencia de falla":
+                        date_col = self.find_column(df, ["date", "fecha"])
+                        if date_col and "failure" in df.columns:
+                            temp = df[[date_col]].copy()
+                            temp["failure_num"] = self.get_failure_series(df)
+                            temp[date_col] = pd.to_datetime(temp[date_col], errors="coerce", dayfirst=True)
+                            temp = temp.dropna(subset=[date_col])
 
-                        if not temp.empty:
-                            grouped = temp.groupby(failure_col)[metric1_col].mean()
-                            labels = ["Sin falla" if i == 0 else "Con falla" for i in grouped.index.tolist()]
-                            colors = [palette["series_1"], palette["series_5"]][:len(labels)]
-                            ax.bar(labels, grouped.values, color=colors)
-                            ax.set_title("Métrica por estado")
+                            if not temp.empty:
+                                temp["day"] = temp[date_col].dt.date
+                                grouped = temp.groupby("day").agg(
+                                    records=("failure_num", "count"),
+                                    failures=("failure_num", "sum"),
+                                ).reset_index()
+                                grouped["failure_rate"] = grouped["failures"] / grouped["records"]
+                                grouped["rolling_rate"] = grouped["failure_rate"].rolling(window=7, min_periods=2).mean()
+
+                                ax.plot(
+                                    grouped["day"],
+                                    grouped["failure_rate"] * 100,
+                                    color=palette["series_1"],
+                                    linewidth=1.4,
+                                    alpha=0.70,
+                                    label="Tasa diaria",
+                                )
+                                ax.plot(
+                                    grouped["day"],
+                                    grouped["rolling_rate"] * 100,
+                                    color=palette["series_2"],
+                                    linewidth=2.2,
+                                    alpha=0.95,
+                                    label="Media móvil 7",
+                                )
+                                ax.set_title("Tendencia de falla")
+                                ax.set_xlabel("Fecha")
+                                ax.set_ylabel("Tasa (%)")
+                                ax.legend(fontsize=8)
+                                rendered = True
+
+                    elif chart_type == "Métricas discriminantes":
+                        effects = self.maintenance_metric_effects(df)
+                        if not effects.empty:
+                            top = effects.head(6)
+                            colors = [palette["series_3"] if v >= 0 else palette["series_5"] for v in top["effect_size"]]
+                            ax.bar(
+                                top["metric"].astype(str),
+                                top["effect_size"],
+                                color=colors,
+                                edgecolor=palette["accent"],
+                                alpha=0.88,
+                            )
+                            ax.axhline(0, color=palette["chart_axis"], linewidth=1.0, alpha=0.9)
+                            ax.set_title("Métricas discriminantes")
+                            ax.set_ylabel("Efecto estandarizado")
                             rendered = True
 
-                    elif chart_type == "Distribución métrica" and metric1_col:
-                        data = self.to_numeric_series(df[metric1_col]).dropna()
-                        if not data.empty:
-                            ax.hist(data, bins=20, color=palette["series_4"])
-                            ax.set_title(f"Distribución {metric1_col}")
-                            rendered = True
+                    elif chart_type == "Comparación métrica foco":
+                        effects = self.maintenance_metric_effects(df)
+                        metric_col = str(effects.iloc[0]["metric"]) if not effects.empty else None
+
+                        if metric_col and metric_col in df.columns and "failure" in df.columns:
+                            temp = pd.DataFrame({
+                                "metric": pd.to_numeric(df[metric_col], errors="coerce"),
+                                "failure_num": self.get_failure_series(df),
+                            }).dropna()
+
+                            if not temp.empty and temp["failure_num"].nunique() > 1:
+                                data_ok = temp.loc[temp["failure_num"] == 0, "metric"].values
+                                data_fail = temp.loc[temp["failure_num"] == 1, "metric"].values
+
+                                data = []
+                                labels = []
+                                if len(data_ok) > 0:
+                                    data.append(data_ok)
+                                    labels.append("Sin falla")
+                                if len(data_fail) > 0:
+                                    data.append(data_fail)
+                                    labels.append("Con falla")
+
+                                if data:
+                                    box = ax.boxplot(data, labels=labels, patch_artist=True)
+
+                                    for patch in box["boxes"]:
+                                        patch.set_facecolor(palette["series_1"])
+                                        patch.set_alpha(0.70)
+                                        patch.set_edgecolor(palette["chart_axis"])
+
+                                    for median in box["medians"]:
+                                        median.set_color(palette["series_2"])
+
+                                    ax.set_title(f"Comparación {metric_col}")
+                                    ax.set_ylabel(metric_col)
+                                    rendered = True
 
                     if not rendered:
                         self.empty_chart_message(ax, "Maintenance: faltan columnas válidas.", module_name)

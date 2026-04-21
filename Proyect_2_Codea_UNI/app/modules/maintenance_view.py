@@ -4,12 +4,9 @@ from tkinter import filedialog, messagebox, ttk
 
 import customtkinter as ctk
 import pandas as pd
-#from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-#from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from app.ui.chart_theme import create_figure, style_axes, style_legend
 
-
+from app.ui.chart_theme import create_figure, style_axes
 from app.core.constants import MODULE_CONFIG
 from app.services.file_loader import load_file
 from app.services.validator import validate_module_file
@@ -48,10 +45,23 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         self.selected_failure_var = tk.StringVar(value="Todos")
         self.sort_by_var = tk.StringVar(value="date")
         self.sort_order_var = tk.StringVar(value="Asc")
-        self.x_var = tk.StringVar(value="metric1")
-        self.y_var = tk.StringVar(value="metric2")
-        self.metric_var = tk.StringVar(value="metric1")
+        self.metric_var = tk.StringVar(value="metric7")
         self.top_n_var = tk.StringVar(value="10")
+        self.view_mode_var = tk.StringVar(value="Analisis")
+
+        # Cache ligero
+        self._cache = {
+            "filtered_df": None,
+            "filtered_key": None,
+            "failure_series": None,
+            "failure_key": None,
+            "metric_effects": None,
+            "metric_effects_key": None,
+            "daily_failure": None,
+            "daily_failure_key": None,
+            "device_summary": None,
+            "device_summary_key": None,
+        }
 
         configure_treeview_style()
         self.build_ui()
@@ -65,69 +75,266 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         except Exception:
             return PALETTE
 
-    def numeric_columns(self, df):
-        if df is None:
+    def metric_columns(self, df=None):
+        source = df if df is not None else self.df
+        if source is None:
             return []
-        return df.select_dtypes(include=["number"]).columns.tolist()
+        return [c for c in source.columns if str(c).lower().startswith("metric")]
 
     def safe_top_n(self):
         try:
-            v = int(self.top_n_var.get())
-            return max(3, min(v, 30))
+            value = int(self.top_n_var.get())
+            return max(3, min(value, 20))
         except Exception:
             return 10
 
+    def clear_analysis_cache(self):
+        for key in self._cache:
+            self._cache[key] = None
+
+    def format_number(self, value, decimals=2, default="N/D"):
+        try:
+            if pd.isna(value):
+                return default
+            return f"{float(value):.{decimals}f}"
+        except Exception:
+            return default
+
+    def filtered_key(self):
+        if self.df is None:
+            return None
+        return (
+            id(self.df),
+            self.selected_device_var.get(),
+            self.selected_failure_var.get(),
+            self.sort_by_var.get(),
+            self.sort_order_var.get(),
+        )
+
     def get_failure_series(self, df):
         if df is None or "failure" not in df.columns:
-            return pd.Series(dtype="float64")
+            return pd.Series(dtype="int64")
+
+        cache_key = (id(df), tuple(df.columns))
+        if self._cache["failure_key"] == cache_key and self._cache["failure_series"] is not None:
+            return self._cache["failure_series"]
 
         s = df["failure"].copy()
 
         if pd.api.types.is_numeric_dtype(s):
-            return pd.to_numeric(s, errors="coerce").fillna(0).astype(int)
-
-        mapped = (
-            s.astype(str)
-            .str.strip()
-            .str.lower()
-            .map(
-                {
-                    "1": 1,
-                    "0": 0,
-                    "true": 1,
-                    "false": 0,
-                    "yes": 1,
-                    "no": 0,
-                    "si": 1,
-                    "sí": 1,
-                }
+            out = pd.to_numeric(s, errors="coerce").fillna(0).astype(int)
+        else:
+            mapped = (
+                s.astype(str)
+                .str.strip()
+                .str.lower()
+                .map(
+                    {
+                        "1": 1,
+                        "0": 0,
+                        "true": 1,
+                        "false": 0,
+                        "yes": 1,
+                        "no": 0,
+                        "si": 1,
+                        "sí": 1,
+                    }
+                )
             )
-        )
-        return mapped.fillna(0).astype(int)
+            out = mapped.fillna(0).astype(int)
+
+        self._cache["failure_key"] = cache_key
+        self._cache["failure_series"] = out
+        return out
 
     def get_filtered_df(self):
         if self.df is None:
             return None
 
-        df = self.df.copy()
+        cache_key = self.filtered_key()
+        if self._cache["filtered_key"] == cache_key and self._cache["filtered_df"] is not None:
+            return self._cache["filtered_df"]
+
+        df = self.df
 
         if "device" in df.columns and self.selected_device_var.get() != "Todos":
-            df = df[df["device"].astype(str) == self.selected_device_var.get()].copy()
+            df = df[df["device"].astype(str) == self.selected_device_var.get()]
 
         if "failure" in df.columns and self.selected_failure_var.get() != "Todos":
             failure_series = self.get_failure_series(df)
             desired = 1 if self.selected_failure_var.get() == "Con falla" else 0
-            df = df[failure_series == desired].copy()
+            df = df[failure_series == desired]
 
         sort_col = self.sort_by_var.get()
         if sort_col in df.columns:
             ascending = self.sort_order_var.get() == "Asc"
             try:
-                df = df.sort_values(sort_col, ascending=ascending)
+                df = df.sort_values(sort_col, ascending=ascending, kind="mergesort")
             except Exception:
                 pass
 
+        self._cache["filtered_key"] = cache_key
+        self._cache["filtered_df"] = df
         return df
+
+    def classify_recent_risk(self, recent_rate, previous_rate):
+        try:
+            if pd.isna(recent_rate) or pd.isna(previous_rate):
+                return "N/D"
+            delta = recent_rate - previous_rate
+            if abs(delta) < 0.0002:
+                return "Estable"
+            if delta > 0:
+                return "Subiendo"
+            return "Bajando"
+        except Exception:
+            return "N/D"
+
+    def get_metric_effects(self, df=None):
+        df = df if df is not None else self.get_filtered_df()
+        if df is None or df.empty or "failure" not in df.columns:
+            return pd.DataFrame()
+
+        cache_key = (id(df), tuple(df.columns))
+        if self._cache["metric_effects_key"] == cache_key and self._cache["metric_effects"] is not None:
+            return self._cache["metric_effects"]
+
+        metric_cols = self.metric_columns(df)
+        if not metric_cols:
+            result = pd.DataFrame()
+        else:
+            failure = self.get_failure_series(df)
+            rows = []
+
+            for col in metric_cols:
+                series = pd.to_numeric(df[col], errors="coerce")
+                valid = pd.DataFrame({"metric": series, "failure": failure}).dropna()
+
+                if valid.empty or valid["failure"].nunique() < 2:
+                    continue
+
+                fail_values = valid.loc[valid["failure"] == 1, "metric"]
+                ok_values = valid.loc[valid["failure"] == 0, "metric"]
+
+                if fail_values.empty or ok_values.empty:
+                    continue
+
+                mean_fail = fail_values.mean()
+                mean_ok = ok_values.mean()
+                delta = mean_fail - mean_ok
+                std_ref = valid["metric"].std()
+                effect = delta / std_ref if pd.notna(std_ref) and std_ref not in (0, 0.0) else 0.0
+
+                rows.append(
+                    {
+                        "metric": col,
+                        "mean_fail": mean_fail,
+                        "mean_ok": mean_ok,
+                        "delta": delta,
+                        "effect_size": effect,
+                        "abs_effect_size": abs(effect),
+                    }
+                )
+
+            result = pd.DataFrame(rows).sort_values("abs_effect_size", ascending=False) if rows else pd.DataFrame()
+
+        self._cache["metric_effects_key"] = cache_key
+        self._cache["metric_effects"] = result
+        return result
+
+    def get_daily_failure_summary(self, df=None):
+        df = df if df is not None else self.get_filtered_df()
+        if df is None or df.empty or "failure" not in df.columns or "date" not in df.columns:
+            return pd.DataFrame()
+
+        cache_key = (id(df), "daily_failure")
+        if self._cache["daily_failure_key"] == cache_key and self._cache["daily_failure"] is not None:
+            return self._cache["daily_failure"]
+
+        temp = df[["date"]].copy()
+        temp["failure_num"] = self.get_failure_series(df)
+        temp["date"] = pd.to_datetime(temp["date"], errors="coerce", dayfirst=True)
+        temp = temp.dropna(subset=["date"])
+
+        if temp.empty:
+            result = pd.DataFrame()
+        else:
+            temp["day"] = temp["date"].dt.date
+            grouped = temp.groupby("day").agg(
+                records=("failure_num", "count"),
+                failures=("failure_num", "sum"),
+            ).reset_index()
+            grouped["failure_rate"] = grouped["failures"] / grouped["records"]
+            grouped["rolling_rate"] = grouped["failure_rate"].rolling(window=7, min_periods=2).mean()
+            result = grouped
+
+        self._cache["daily_failure_key"] = cache_key
+        self._cache["daily_failure"] = result
+        return result
+
+    def get_device_summary(self, df=None):
+        df = df if df is not None else self.get_filtered_df()
+        if df is None or df.empty or "device" not in df.columns or "failure" not in df.columns:
+            return pd.DataFrame()
+
+        cache_key = (id(df), "device_summary", self.metric_var.get())
+        if self._cache["device_summary_key"] == cache_key and self._cache["device_summary"] is not None:
+            return self._cache["device_summary"]
+
+        temp = df.copy()
+        temp["failure_num"] = self.get_failure_series(df)
+
+        grouped = temp.groupby("device").agg(
+            records=("failure_num", "count"),
+            failures=("failure_num", "sum"),
+            failure_rate=("failure_num", "mean"),
+        ).reset_index()
+
+        # Criticidad compuesta: pondera conteo + tasa, evitando ruido en equipos con muy pocos registros
+        grouped["criticality_score"] = (
+            grouped["failures"] * 0.65
+            + grouped["failure_rate"] * 100 * 0.35
+        )
+
+        metric = self.metric_var.get()
+        if metric in temp.columns:
+            numeric_metric = pd.to_numeric(temp[metric], errors="coerce")
+            temp["_metric_num"] = numeric_metric
+            metric_group = temp.groupby("device")["_metric_num"].mean().reset_index().rename(columns={"_metric_num": f"{metric}_mean"})
+            grouped = grouped.merge(metric_group, on="device", how="left")
+
+        grouped = grouped.sort_values(["criticality_score", "failures", "failure_rate"], ascending=False)
+        self._cache["device_summary_key"] = cache_key
+        self._cache["device_summary"] = grouped
+        return grouped
+
+    def top_metric_name(self):
+        effects = self.get_metric_effects()
+        if effects.empty:
+            return "N/D"
+        return str(effects.iloc[0]["metric"])
+
+    def update_treeview(self, tree, dataframe, width=120, limit=30):
+        tree.delete(*tree.get_children())
+
+        cols = list(dataframe.columns)
+        tree["columns"] = cols
+
+        for col in cols:
+            tree.heading(col, text=str(col))
+            tree.column(col, width=width, anchor="center")
+
+        for _, row in dataframe.head(limit).iterrows():
+            values = []
+            for value in row.tolist():
+                if isinstance(value, float):
+                    if "rate" in str(cols[len(values)]).lower():
+                        values.append(f"{value * 100:.2f}%")
+                    else:
+                        values.append(f"{value:.3f}")
+                else:
+                    values.append(str(value))
+            tree.insert("", "end", values=values)
 
     # -------------------------------------------------
     # UI
@@ -141,7 +348,7 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         make_title(header, "Maintenance Module").pack(anchor="w")
         make_subtitle(
             header,
-            "Perfilado, limpieza asistida, exploración de fallas y análisis de métricas de sensores.",
+            "Criticidad de equipos, métricas discriminantes y señal temporal de riesgo.",
         ).pack(anchor="w", pady=(4, 0))
 
         actions = ctk.CTkFrame(self, fg_color="transparent")
@@ -153,13 +360,24 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         self.info_label = ctk.CTkLabel(actions, text="Sin archivo cargado", text_color=palette["muted"])
         self.info_label.pack(side="left", padx=8)
 
+        mode_box = ctk.CTkFrame(actions, fg_color="transparent")
+        mode_box.pack(side="right")
+
+        ctk.CTkLabel(mode_box, text="Vista", text_color=palette["muted"]).pack(side="left", padx=(0, 6))
+        ctk.CTkSegmentedButton(
+            mode_box,
+            values=["Analisis", "Reporte"],
+            variable=self.view_mode_var,
+            command=lambda _: self.toggle_mode(),
+        ).pack(side="left")
+
         self.build_kpi_section()
         self.build_prep_section()
         self.build_profile_section()
-        self.build_preview_section()
-        self.build_dashboard_section()
-        self.build_summary_section()
-        self.build_conclusion_section()
+        self.build_analysis_zone()
+        self.build_report_zone()
+
+        self.toggle_mode()
 
     def build_kpi_section(self):
         palette = self.get_palette()
@@ -170,18 +388,21 @@ class MaintenanceView(ctk.CTkScrollableFrame):
 
         self.kpi_cards = {}
         labels = [
-            ("samples", "Registros activos"),
             ("failure_rate", "Tasa de falla"),
-            ("critical_device", "Dispositivo crítico"),
-            ("metric_signal", "Métrica sensible"),
+            ("critical_device", "Equipo más crítico"),
+            ("signal_metric", "Métrica más discriminante"),
+            ("recent_signal", "Señal reciente"),
         ]
 
         for i, (key, title_txt) in enumerate(labels):
             card = make_card(self.kpi_wrap)
             card.grid(row=0, column=i, sticky="nsew", padx=6, pady=4)
 
-            title = ctk.CTkLabel(card, text=title_txt, text_color=palette["muted"])
-            title.pack(anchor="w", padx=12, pady=(10, 2))
+            ctk.CTkLabel(
+                card,
+                text=title_txt,
+                text_color=palette["muted"],
+            ).pack(anchor="w", padx=12, pady=(10, 2))
 
             value = ctk.CTkLabel(
                 card,
@@ -192,7 +413,6 @@ class MaintenanceView(ctk.CTkScrollableFrame):
                 justify="left",
             )
             value.pack(anchor="w", padx=12, pady=(0, 10))
-
             self.kpi_cards[key] = value
 
         self.tech_kpi_wrap = ctk.CTkFrame(self, fg_color="transparent")
@@ -200,19 +420,22 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         self.tech_kpi_wrap.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.tech_kpis = {}
-        labels = [
+        tech_labels = [
             ("rows", "Filas"),
             ("cols", "Columnas"),
             ("duplicates", "Duplicados"),
             ("nulls", "Nulos"),
         ]
 
-        for i, (key, title_txt) in enumerate(labels):
+        for i, (key, title_txt) in enumerate(tech_labels):
             card = make_card(self.tech_kpi_wrap)
             card.grid(row=0, column=i, sticky="nsew", padx=6, pady=4)
 
-            title = ctk.CTkLabel(card, text=title_txt, text_color=palette["muted"])
-            title.pack(anchor="w", padx=12, pady=(10, 2))
+            ctk.CTkLabel(
+                card,
+                text=title_txt,
+                text_color=palette["muted"],
+            ).pack(anchor="w", padx=12, pady=(10, 2))
 
             value = ctk.CTkLabel(
                 card,
@@ -255,7 +478,12 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         filter_box.pack(fill="x", padx=12, pady=(0, 12))
 
         ctk.CTkLabel(filter_box, text="Dispositivo", text_color=palette["muted"]).grid(row=0, column=0, padx=8, pady=6, sticky="w")
-        self.device_menu = ctk.CTkOptionMenu(filter_box, values=["Todos"], variable=self.selected_device_var, command=lambda _: self.refresh_analysis())
+        self.device_menu = ctk.CTkOptionMenu(
+            filter_box,
+            values=["Todos"],
+            variable=self.selected_device_var,
+            command=lambda _: self.refresh_current_view(),
+        )
         self.device_menu.grid(row=0, column=1, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Estado falla", text_color=palette["muted"]).grid(row=0, column=2, padx=8, pady=6, sticky="w")
@@ -263,31 +491,45 @@ class MaintenanceView(ctk.CTkScrollableFrame):
             filter_box,
             values=["Todos", "Con falla", "Sin falla"],
             variable=self.selected_failure_var,
-            command=lambda _: self.refresh_analysis(),
+            command=lambda _: self.refresh_current_view(),
         )
         self.failure_menu.grid(row=0, column=3, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Ordenar por", text_color=palette["muted"]).grid(row=0, column=4, padx=8, pady=6, sticky="w")
-        self.sort_menu = ctk.CTkOptionMenu(filter_box, values=["date"], variable=self.sort_by_var, command=lambda _: self.refresh_analysis())
+        self.sort_menu = ctk.CTkOptionMenu(
+            filter_box,
+            values=["date"],
+            variable=self.sort_by_var,
+            command=lambda _: self.refresh_current_view(),
+        )
         self.sort_menu.grid(row=0, column=5, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Orden", text_color=palette["muted"]).grid(row=0, column=6, padx=8, pady=6, sticky="w")
-        ctk.CTkOptionMenu(filter_box, values=["Asc", "Desc"], variable=self.sort_order_var, command=lambda _: self.refresh_analysis(), width=90).grid(row=0, column=7, padx=8, pady=6, sticky="w")
+        ctk.CTkOptionMenu(
+            filter_box,
+            values=["Asc", "Desc"],
+            variable=self.sort_order_var,
+            command=lambda _: self.refresh_current_view(),
+            width=90,
+        ).grid(row=0, column=7, padx=8, pady=6, sticky="w")
 
-        ctk.CTkLabel(filter_box, text="Variable X", text_color=palette["muted"]).grid(row=1, column=0, padx=8, pady=6, sticky="w")
-        self.x_menu = ctk.CTkOptionMenu(filter_box, values=["metric1"], variable=self.x_var, command=lambda _: self.refresh_analysis())
-        self.x_menu.grid(row=1, column=1, padx=8, pady=6, sticky="w")
+        ctk.CTkLabel(filter_box, text="Métrica foco", text_color=palette["muted"]).grid(row=1, column=0, padx=8, pady=6, sticky="w")
+        self.metric_menu = ctk.CTkOptionMenu(
+            filter_box,
+            values=["metric1"],
+            variable=self.metric_var,
+            command=lambda _: self.refresh_current_view(),
+        )
+        self.metric_menu.grid(row=1, column=1, padx=8, pady=6, sticky="w")
 
-        ctk.CTkLabel(filter_box, text="Variable Y", text_color=palette["muted"]).grid(row=1, column=2, padx=8, pady=6, sticky="w")
-        self.y_menu = ctk.CTkOptionMenu(filter_box, values=["metric2"], variable=self.y_var, command=lambda _: self.refresh_analysis())
-        self.y_menu.grid(row=1, column=3, padx=8, pady=6, sticky="w")
-
-        ctk.CTkLabel(filter_box, text="Métrica KPI", text_color=palette["muted"]).grid(row=1, column=4, padx=8, pady=6, sticky="w")
-        self.metric_menu = ctk.CTkOptionMenu(filter_box, values=["metric1"], variable=self.metric_var, command=lambda _: self.refresh_analysis())
-        self.metric_menu.grid(row=1, column=5, padx=8, pady=6, sticky="w")
-
-        ctk.CTkLabel(filter_box, text="Top N", text_color=palette["muted"]).grid(row=1, column=6, padx=8, pady=6, sticky="w")
-        ctk.CTkOptionMenu(filter_box, values=["5", "8", "10", "12", "15", "20"], variable=self.top_n_var, command=lambda _: self.refresh_analysis(), width=80).grid(row=1, column=7, padx=8, pady=6, sticky="w")
+        ctk.CTkLabel(filter_box, text="Top N", text_color=palette["muted"]).grid(row=1, column=2, padx=8, pady=6, sticky="w")
+        ctk.CTkOptionMenu(
+            filter_box,
+            values=["5", "8", "10", "12", "15", "20"],
+            variable=self.top_n_var,
+            command=lambda _: self.refresh_current_view(),
+            width=80,
+        ).grid(row=1, column=3, padx=8, pady=6, sticky="w")
 
     def build_profile_section(self):
         palette = self.get_palette()
@@ -307,10 +549,12 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         self.profile_box.insert("1.0", "Aquí aparecerá el diagnóstico del dataset.")
         self.profile_box.configure(state="disabled")
 
-    def build_preview_section(self):
+    def build_analysis_zone(self):
         palette = self.get_palette()
 
-        self.preview_card = make_card(self)
+        self.analysis_zone = ctk.CTkFrame(self, fg_color="transparent")
+
+        self.preview_card = make_card(self.analysis_zone)
         self.preview_card.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
         ctk.CTkLabel(
@@ -332,10 +576,7 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         sb.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=sb.set)
 
-    def build_dashboard_section(self):
-        palette = self.get_palette()
-
-        self.dashboard_card = make_card(self)
+        self.dashboard_card = make_card(self.analysis_zone)
         self.dashboard_card.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
         ctk.CTkLabel(
@@ -350,23 +591,23 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         grid.grid_columnconfigure((0, 1), weight=1)
         grid.grid_rowconfigure((0, 1), weight=1)
 
-        self.scatter_card = make_card(grid)
-        self.scatter_card.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.time_card = make_card(grid)
+        self.time_card.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+
+        self.metric_card = make_card(grid)
+        self.metric_card.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
+
+        self.device_card = make_card(grid)
+        self.device_card.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
 
         self.box_card = make_card(grid)
-        self.box_card.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
-
-        self.bar_card = make_card(grid)
-        self.bar_card.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
-
-        self.corr_card = make_card(grid)
-        self.corr_card.grid(row=1, column=1, sticky="nsew", padx=6, pady=6)
+        self.box_card.grid(row=1, column=1, sticky="nsew", padx=6, pady=6)
 
         for card, txt in [
-            (self.scatter_card, "Relación entre métricas"),
-            (self.box_card, "Distribución por estado de falla"),
-            (self.bar_card, "Top dispositivos con fallas"),
-            (self.corr_card, "Correlación sensores vs falla"),
+            (self.time_card, "Tendencia temporal de falla"),
+            (self.metric_card, "Métricas más discriminantes"),
+            (self.device_card, "Equipos críticos"),
+            (self.box_card, "Comparación de métrica foco"),
         ]:
             ctk.CTkLabel(
                 card,
@@ -375,22 +616,19 @@ class MaintenanceView(ctk.CTkScrollableFrame):
                 text_color=palette["text"],
             ).pack(anchor="w", padx=12, pady=(10, 6))
 
-        self.scatter_frame = ctk.CTkFrame(self.scatter_card, fg_color="transparent")
-        self.scatter_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.time_frame = ctk.CTkFrame(self.time_card, fg_color="transparent")
+        self.time_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        self.metric_frame = ctk.CTkFrame(self.metric_card, fg_color="transparent")
+        self.metric_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        self.device_frame = ctk.CTkFrame(self.device_card, fg_color="transparent")
+        self.device_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
         self.box_frame = ctk.CTkFrame(self.box_card, fg_color="transparent")
         self.box_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        self.bar_frame = ctk.CTkFrame(self.bar_card, fg_color="transparent")
-        self.bar_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-
-        self.corr_frame = ctk.CTkFrame(self.corr_card, fg_color="transparent")
-        self.corr_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-
-    def build_summary_section(self):
-        palette = self.get_palette()
-
-        self.summary_card = make_card(self)
+        self.summary_card = make_card(self.analysis_zone)
         self.summary_card.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
         ctk.CTkLabel(
@@ -400,39 +638,80 @@ class MaintenanceView(ctk.CTkScrollableFrame):
             text_color=palette["text"],
         ).pack(anchor="w", padx=14, pady=(14, 8))
 
-        wrap = ctk.CTkFrame(self.summary_card, fg_color="transparent")
-        wrap.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-        wrap.grid_rowconfigure(0, weight=1)
-        wrap.grid_columnconfigure(0, weight=1)
+        wrap2 = ctk.CTkFrame(self.summary_card, fg_color="transparent")
+        wrap2.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        wrap2.grid_rowconfigure(0, weight=1)
+        wrap2.grid_columnconfigure(0, weight=1)
 
-        self.summary_table = ttk.Treeview(wrap, show="headings", height=12)
+        self.summary_table = ttk.Treeview(wrap2, show="headings", height=12)
         self.summary_table.grid(row=0, column=0, sticky="nsew")
 
-        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.summary_table.yview)
-        sb.grid(row=0, column=1, sticky="ns")
-        self.summary_table.configure(yscrollcommand=sb.set)
+        sb2 = ttk.Scrollbar(wrap2, orient="vertical", command=self.summary_table.yview)
+        sb2.grid(row=0, column=1, sticky="ns")
+        self.summary_table.configure(yscrollcommand=sb2.set)
 
-    def build_conclusion_section(self):
+    def build_report_zone(self):
         palette = self.get_palette()
 
-        self.conclusion_card = make_card(self)
-        self.conclusion_card.pack(fill="x", padx=20, pady=(0, 20))
+        self.report_zone = ctk.CTkFrame(self, fg_color="transparent")
+
+        self.report_main_card = make_card(self.report_zone)
+        self.report_main_card.pack(fill="x", padx=20, pady=(0, 10))
 
         ctk.CTkLabel(
-            self.conclusion_card,
-            text="Hallazgos automáticos",
+            self.report_main_card,
+            text="Lectura principal para decisión",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=palette["text"],
         ).pack(anchor="w", padx=14, pady=(14, 8))
 
-        self.conclusion_box = ctk.CTkTextbox(self.conclusion_card, height=160)
+        self.report_main_box = ctk.CTkTextbox(self.report_main_card, height=130)
+        self.report_main_box.pack(fill="x", padx=12, pady=(0, 12))
+        self.report_main_box.insert("1.0", "Aquí aparecerá la lectura principal del riesgo de mantenimiento.")
+        self.report_main_box.configure(state="disabled")
+
+        self.report_chart_card = make_card(self.report_zone)
+        self.report_chart_card.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+
+        ctk.CTkLabel(
+            self.report_chart_card,
+            text="Visual principal de soporte",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=palette["text"],
+        ).pack(anchor="w", padx=14, pady=(14, 8))
+
+        self.report_chart_frame = ctk.CTkFrame(self.report_chart_card, fg_color="transparent")
+        self.report_chart_frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+
+        self.conclusion_card = make_card(self.report_zone)
+        self.conclusion_card.pack(fill="x", padx=20, pady=(0, 20))
+
+        ctk.CTkLabel(
+            self.conclusion_card,
+            text="Conclusiones y acción sugerida",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=palette["text"],
+        ).pack(anchor="w", padx=14, pady=(14, 8))
+
+        self.conclusion_box = ctk.CTkTextbox(self.conclusion_card, height=170)
         self.conclusion_box.pack(fill="x", padx=12, pady=(0, 12))
-        self.conclusion_box.insert("1.0", "Aquí aparecerán hallazgos y apoyo para decisión.")
+        self.conclusion_box.insert("1.0", "Aquí aparecerán conclusiones y apoyo para decisión.")
         self.conclusion_box.configure(state="disabled")
 
     # -------------------------------------------------
     # Lógica
     # -------------------------------------------------
+    def toggle_mode(self):
+        if self.view_mode_var.get() == "Analisis":
+            self.report_zone.pack_forget()
+            self.analysis_zone.pack(fill="both", expand=True, pady=(0, 0))
+        else:
+            self.analysis_zone.pack_forget()
+            self.report_zone.pack(fill="both", expand=True, pady=(0, 0))
+
+        if self.df is not None:
+            self.refresh_current_view()
+
     def import_file(self):
         path = filedialog.askopenfilename(
             title="Selecciona archivo de Maintenance",
@@ -456,6 +735,7 @@ class MaintenanceView(ctk.CTkScrollableFrame):
             self.df = raw_df.copy()
             self.profile = profile_dataframe(self.raw_df)
             self.clean_summary = None
+            self.clear_analysis_cache()
 
             self.info_label.configure(text=os.path.basename(path))
             self.app_state.set_dataset("Maintenance", self.raw_df, self.df)
@@ -482,6 +762,8 @@ class MaintenanceView(ctk.CTkScrollableFrame):
 
         self.df, self.clean_summary = clean_dataframe(self.raw_df, options)
         self.profile = profile_dataframe(self.df)
+        self.clear_analysis_cache()
+
         self.app_state.set_dataset("Maintenance", self.raw_df, self.df)
 
         self.update_controls()
@@ -500,82 +782,98 @@ class MaintenanceView(ctk.CTkScrollableFrame):
         self.sort_menu.configure(values=cols)
         self.sort_by_var.set("date" if "date" in cols else cols[0])
 
-        num_cols = [c for c in self.numeric_columns(self.df) if c != "failure"]
-        if not num_cols:
-            num_cols = self.numeric_columns(self.df)
+        metric_cols = self.metric_columns(self.df)
+        if metric_cols:
+            self.metric_menu.configure(values=metric_cols)
 
-        if num_cols:
-            self.x_menu.configure(values=num_cols)
-            self.y_menu.configure(values=num_cols)
-            self.metric_menu.configure(values=num_cols)
-
-            self.x_var.set("metric1" if "metric1" in num_cols else num_cols[0])
-            self.y_var.set("metric2" if "metric2" in num_cols else num_cols[min(1, len(num_cols) - 1)])
-            self.metric_var.set("metric1" if "metric1" in num_cols else num_cols[0])
+            effects = self.get_metric_effects(self.df)
+            if not effects.empty:
+                self.metric_var.set(str(effects.iloc[0]["metric"]))
+            else:
+                self.metric_var.set(metric_cols[0])
 
     def refresh_all(self, initial=False):
         if self.df is None:
             return
+
         self.render_kpis()
         self.render_profile_box(initial=initial)
-        self.render_preview_table()
-        self.render_summary_table()
-        self.render_all_charts()
-        self.render_conclusions(initial=initial)
 
-    def refresh_analysis(self):
+        if self.view_mode_var.get() == "Analisis":
+            self.render_preview_table()
+            self.render_summary_table()
+            self.render_all_charts()
+        else:
+            self.render_report_main()
+            self.render_report_chart()
+            self.render_conclusions(initial=initial)
+
+    def refresh_current_view(self):
         if self.df is None:
             return
+
+        self.clear_analysis_cache()
         self.render_kpis()
-        self.render_preview_table()
-        self.render_summary_table()
-        self.render_all_charts()
-        self.render_conclusions(initial=False)
+
+        if self.view_mode_var.get() == "Analisis":
+            self.render_preview_table()
+            self.render_summary_table()
+            self.render_all_charts()
+        else:
+            self.render_report_main()
+            self.render_report_chart()
+            self.render_conclusions(initial=False)
 
     # -------------------------------------------------
     # Render
     # -------------------------------------------------
     def render_kpis(self):
         df = self.get_filtered_df()
-        metric = self.metric_var.get()
-        failure_series = self.get_failure_series(df)
+        if df is None or self.profile is None:
+            return
 
+        failure_series = self.get_failure_series(df)
         self.tech_kpis["rows"].configure(text=f"{len(df):,}")
         self.tech_kpis["cols"].configure(text=str(df.shape[1]))
         self.tech_kpis["duplicates"].configure(text=str(self.profile["duplicates"]))
         self.tech_kpis["nulls"].configure(text=str(self.profile["total_nulls"]))
 
-        self.kpi_cards["samples"].configure(text=f"{len(df):,}")
-
         if len(df) > 0 and len(failure_series) == len(df):
             rate = failure_series.mean() * 100
-            self.kpi_cards["failure_rate"].configure(text=f"{rate:.2f}%")
+            self.kpi_cards["failure_rate"].configure(text=f"{rate:.3f}%")
         else:
             self.kpi_cards["failure_rate"].configure(text="N/D")
 
-        if {"device", "failure"}.issubset(df.columns) and not df.empty:
-            tmp = df.copy()
-            tmp["_failure_num"] = self.get_failure_series(tmp)
-            grouped = tmp.groupby("device")["_failure_num"].sum().sort_values(ascending=False)
-            critical_device = grouped.index[0] if not grouped.empty else "N/D"
-            self.kpi_cards["critical_device"].configure(text=str(critical_device))
+        device_summary = self.get_device_summary(df)
+        if not device_summary.empty:
+            self.kpi_cards["critical_device"].configure(text=str(device_summary.iloc[0]["device"]))
         else:
             self.kpi_cards["critical_device"].configure(text="N/D")
 
-        metric_signal = "N/D"
-        if metric in df.columns and "failure" in df.columns and pd.api.types.is_numeric_dtype(df[metric]):
-            tmp = df[[metric]].copy()
-            tmp["failure_num"] = self.get_failure_series(df)
-            if tmp["failure_num"].nunique() > 1:
-                mean_fail = tmp.loc[tmp["failure_num"] == 1, metric].mean()
-                mean_ok = tmp.loc[tmp["failure_num"] == 0, metric].mean()
-                if pd.notna(mean_fail) and pd.notna(mean_ok):
-                    delta = mean_fail - mean_ok
-                    metric_signal = f"{metric} ({delta:+.2f})"
-        self.kpi_cards["metric_signal"].configure(text=metric_signal)
+        effects = self.get_metric_effects(df)
+        if not effects.empty:
+            top = effects.iloc[0]
+            self.kpi_cards["signal_metric"].configure(text=f"{top['metric']} ({top['effect_size']:+.2f})")
+        else:
+            self.kpi_cards["signal_metric"].configure(text="N/D")
+
+        daily = self.get_daily_failure_summary(df)
+        if not daily.empty and len(daily) >= 10:
+            recent = daily["failure_rate"].tail(5).mean()
+            previous = daily["failure_rate"].iloc[-10:-5].mean()
+            label = self.classify_recent_risk(recent, previous)
+            delta = recent - previous if pd.notna(recent) and pd.notna(previous) else None
+            if delta is not None and pd.notna(delta):
+                self.kpi_cards["recent_signal"].configure(text=f"{label} ({delta * 100:+.3f} pp)")
+            else:
+                self.kpi_cards["recent_signal"].configure(text=label)
+        else:
+            self.kpi_cards["recent_signal"].configure(text="N/D")
 
     def render_profile_box(self, initial=False):
         profile = self.profile
+        if profile is None:
+            return
 
         lines = [
             "DIAGNÓSTICO DEL DATASET",
@@ -614,344 +912,134 @@ class MaintenanceView(ctk.CTkScrollableFrame):
 
     def render_preview_table(self):
         df = self.get_filtered_df()
-        preview = df.head(15)
-
-        self.tree.delete(*self.tree.get_children())
-        cols = list(preview.columns)
-        self.tree["columns"] = cols
-
-        for col in cols:
-            self.tree.heading(col, text=col)
-            self.tree.column(col, width=110, anchor="center")
-
-        for _, row in preview.iterrows():
-            self.tree.insert("", "end", values=[str(v) for v in row.tolist()])
+        if df is None:
+            return
+        preview = df.head(15).copy()
+        self.update_treeview(self.tree, preview, width=110, limit=15)
 
     def render_summary_table(self):
-        df = self.get_filtered_df()
-
-        if "device" not in df.columns:
+        device_summary = self.get_device_summary()
+        if device_summary.empty:
             return
-
-        tmp = df.copy()
-        if "failure" in tmp.columns:
-            tmp["failure_num"] = self.get_failure_series(tmp)
 
         metric = self.metric_var.get()
-        agg_map = {}
+        cols = ["device", "records", "failures", "failure_rate", "criticality_score"]
+        if f"{metric}_mean" in device_summary.columns:
+            cols.append(f"{metric}_mean")
 
-        if "failure_num" in tmp.columns:
-            agg_map["failure_num"] = ["count", "sum", "mean"]
-
-        if metric in tmp.columns and pd.api.types.is_numeric_dtype(tmp[metric]):
-            agg_map[metric] = ["mean", "std", "max"]
-
-        if not agg_map:
-            return
-
-        grouped = tmp.groupby("device").agg(agg_map).reset_index()
-        grouped.columns = ["_".join(col).strip("_") for col in grouped.columns.values]
-
-        rename_map = {
-            "failure_num_count": "records",
-            "failure_num_sum": "failures",
-            "failure_num_mean": "failure_rate",
-        }
-        grouped = grouped.rename(columns=rename_map)
-
-        if "failures" in grouped.columns:
-            grouped = grouped.sort_values("failures", ascending=False)
-
-        grouped = grouped.head(30)
-
-        self.summary_table.delete(*self.summary_table.get_children())
-        cols = list(grouped.columns)
-        self.summary_table["columns"] = cols
-
-        for col in cols:
-            self.summary_table.heading(col, text=col)
-            self.summary_table.column(col, width=120, anchor="center")
-
-        for _, row in grouped.iterrows():
-            vals = []
-            for v in row.tolist():
-                if isinstance(v, float):
-                    if "rate" in str(cols[len(vals)]).lower():
-                        vals.append(f"{v * 100:.2f}%")
-                    else:
-                        vals.append(f"{v:.2f}")
-                else:
-                    vals.append(str(v))
-            self.summary_table.insert("", "end", values=vals)
+        table_df = device_summary[cols].copy().head(30)
+        self.update_treeview(self.summary_table, table_df, width=125, limit=30)
 
     def clear_chart_frame(self, frame):
         for child in frame.winfo_children():
             child.destroy()
 
-    def style_axes(self, fig, ax):
-        palette = self.get_palette()
-        fig.patch.set_facecolor(palette["chart_bg"])
-        ax.set_facecolor(palette["chart_bg"])
-        ax.grid(True, color=palette["chart_grid"], alpha=0.35, linestyle="--", linewidth=0.7)
-
-        for spine in ax.spines.values():
-            spine.set_color(palette["muted"])
-
-        ax.tick_params(axis="x", colors=palette["text"])
-        ax.tick_params(axis="y", colors=palette["text"])
-        ax.title.set_color(palette["text"])
-        ax.xaxis.label.set_color(palette["text"])
-        ax.yaxis.label.set_color(palette["text"])
-
     def render_all_charts(self):
-        self.render_scatter_chart()
+        self.render_time_chart()
+        self.render_metric_effect_chart()
+        self.render_device_chart()
         self.render_box_chart()
-        self.render_bar_chart()
-        self.render_corr_chart()
-        
-    def style_axes(self, fig, ax):
+
+    def render_time_chart(self):
+        self.clear_chart_frame(self.time_frame)
         palette = self.get_palette()
-        fig.patch.set_facecolor(palette["chart_bg"])
-        ax.set_facecolor(palette["chart_bg"])
-        ax.grid(True, color=palette["chart_grid"], alpha=0.35, linestyle="--", linewidth=0.7)
-
-        for spine in ax.spines.values():
-            spine.set_color(palette["muted"])
-
-        ax.tick_params(axis="x", colors=palette["text"])
-        ax.tick_params(axis="y", colors=palette["text"])
-        ax.title.set_color(palette["text"])
-        ax.xaxis.label.set_color(palette["text"])
-        ax.yaxis.label.set_color(palette["text"])
-
-    """def render_scatter_chart(self):
-        self.clear_chart_frame(self.scatter_frame)
-        df = self.get_filtered_df()
-        x = self.x_var.get()
-        y = self.y_var.get()
-        palette = self.get_palette()
-
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
-        ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
-
-        if x in df.columns and y in df.columns:
-            sample = df[[x, y]].dropna().head(1500).copy()
-
-            if "failure" in df.columns:
-                sample["failure_num"] = self.get_failure_series(df.loc[sample.index])
-                fail_df = sample[sample["failure_num"] == 1]
-                ok_df = sample[sample["failure_num"] == 0]
-
-                ax.scatter(ok_df[x], ok_df[y], s=18, alpha=0.55, color=palette["primary"], edgecolors="none", label="Sin falla")
-                ax.scatter(fail_df[x], fail_df[y], s=22, alpha=0.80, color=palette["accent"], edgecolors="none", label="Con falla")
-                ax.legend()
-            else:
-                ax.scatter(sample[x], sample[y], s=18, alpha=0.7, color=palette["accent"], edgecolors="none")
-
-            ax.set_title(f"{x} vs {y}")
-            ax.set_xlabel(x)
-            ax.set_ylabel(y)
-
-        canvas = FigureCanvasTkAgg(fig, master=self.scatter_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)"""
-        
-    def render_scatter_chart(self):
-        self.clear_chart_frame(self.scatter_frame)
-        df = self.get_filtered_df()
-        x = self.x_var.get()
-        y = self.y_var.get()
-        palette = self.get_palette()
+        summary = self.get_daily_failure_summary()
 
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if x in df.columns and y in df.columns:
-            sample = df[[x, y]].dropna().head(1500).copy()
+        if not summary.empty:
+            ax.plot(
+                summary["day"],
+                summary["failure_rate"] * 100,
+                color=palette["series_1"],
+                linewidth=1.5,
+                alpha=0.70,
+                label="Tasa diaria",
+            )
 
-            if "failure" in df.columns:
-                sample["failure_num"] = self.get_failure_series(df.loc[sample.index])
-                fail_df = sample[sample["failure_num"] == 1]
-                ok_df = sample[sample["failure_num"] == 0]
-
-                ax.scatter(
-                    ok_df[x], ok_df[y],
-                    s=18, alpha=0.55,
-                    color=palette["series_1"],
-                    edgecolors="none",
-                    label="Sin falla"
-                )
-                ax.scatter(
-                    fail_df[x], fail_df[y],
-                    s=24, alpha=0.82,
-                    color=palette["series_5"],
-                    edgecolors="none",
-                    label="Con falla"
-                )
-                ax.legend()
-                style_legend(ax, palette)
-            else:
-                ax.scatter(
-                    sample[x], sample[y],
-                    s=18, alpha=0.72,
-                    color=palette["series_1"],
-                    edgecolors="none"
+            if "rolling_rate" in summary.columns:
+                ax.plot(
+                    summary["day"],
+                    summary["rolling_rate"] * 100,
+                    color=palette["series_2"],
+                    linewidth=2.2,
+                    alpha=0.95,
+                    label="Media móvil 7",
                 )
 
-            ax.set_title(f"{x} vs {y}")
-            ax.set_xlabel(x)
-            ax.set_ylabel(y)
+            ax.set_title("Tendencia temporal de falla")
+            ax.set_xlabel("Fecha")
+            ax.set_ylabel("Tasa de falla (%)")
 
-        canvas = FigureCanvasTkAgg(fig, master=self.scatter_frame)
+            for label in ax.get_xticklabels():
+                label.set_rotation(35)
+                label.set_ha("right")
+
+            ax.legend()
+
+        canvas = FigureCanvasTkAgg(fig, master=self.time_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    """def render_box_chart(self):
-        self.clear_chart_frame(self.box_frame)
-        df = self.get_filtered_df()
-        metric = self.metric_var.get()
+    def render_metric_effect_chart(self):
+        self.clear_chart_frame(self.metric_frame)
         palette = self.get_palette()
-
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
-        ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
-
-        if metric in df.columns and "failure" in df.columns:
-            tmp = df[[metric]].copy()
-            tmp["failure_num"] = self.get_failure_series(df)
-            data_ok = tmp.loc[tmp["failure_num"] == 0, metric].dropna().values
-            data_fail = tmp.loc[tmp["failure_num"] == 1, metric].dropna().values
-
-            data = []
-            labels = []
-            if len(data_ok) > 0:
-                data.append(data_ok)
-                labels.append("Sin falla")
-            if len(data_fail) > 0:
-                data.append(data_fail)
-                labels.append("Con falla")
-
-            if data:
-                box = ax.boxplot(data, labels=labels, patch_artist=True)
-                for patch in box["boxes"]:
-                    patch.set_facecolor(palette["primary"])
-                    patch.set_alpha(0.75)
-                    patch.set_edgecolor(palette["accent"])
-                for median in box["medians"]:
-                    median.set_color(palette["text"])
-
-                ax.set_title(f"Distribución de {metric} por estado")
-                ax.set_ylabel(metric)
-
-        canvas = FigureCanvasTkAgg(fig, master=self.box_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)"""
-        
-    def render_box_chart(self):
-        self.clear_chart_frame(self.box_frame)
-        df = self.get_filtered_df()
-        metric = self.metric_var.get()
-        palette = self.get_palette()
+        effects = self.get_metric_effects()
 
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if metric in df.columns and "failure" in df.columns:
-            tmp = df[[metric]].copy()
-            tmp["failure_num"] = self.get_failure_series(df)
+        if not effects.empty:
+            top = effects.head(self.safe_top_n())
+            colors = [palette["series_3"] if v >= 0 else palette["series_5"] for v in top["effect_size"]]
 
-            data_ok = tmp.loc[tmp["failure_num"] == 0, metric].dropna().values
-            data_fail = tmp.loc[tmp["failure_num"] == 1, metric].dropna().values
+            ax.bar(
+                top["metric"].astype(str),
+                top["effect_size"],
+                color=colors,
+                edgecolor=palette["accent"],
+                alpha=0.88,
+            )
+            ax.axhline(0, color=palette["chart_axis"], linewidth=1.0, alpha=0.9)
+            ax.set_title("Métricas que más separan falla vs no falla")
+            ax.set_ylabel("Efecto estandarizado")
 
-            data = []
-            labels = []
-            if len(data_ok) > 0:
-                data.append(data_ok)
-                labels.append("Sin falla")
-            if len(data_fail) > 0:
-                data.append(data_fail)
-                labels.append("Con falla")
+            for label in ax.get_xticklabels():
+                label.set_rotation(30)
+                label.set_ha("right")
 
-            if data:
-                box = ax.boxplot(data, labels=labels, patch_artist=True)
-
-                for patch in box["boxes"]:
-                    patch.set_facecolor(palette["series_1"])
-                    patch.set_alpha(0.70)
-                    patch.set_edgecolor(palette["chart_axis"])
-
-                for median in box["medians"]:
-                    median.set_color(palette["series_2"])
-
-                for whisker in box["whiskers"]:
-                    whisker.set_color(palette["chart_axis"])
-
-                for cap in box["caps"]:
-                    cap.set_color(palette["chart_axis"])
-
-                ax.set_title(f"Distribución de {metric} por estado")
-                ax.set_ylabel(metric)
-
-        canvas = FigureCanvasTkAgg(fig, master=self.box_frame)
+        canvas = FigureCanvasTkAgg(fig, master=self.metric_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    """def render_bar_chart(self):
-        self.clear_chart_frame(self.bar_frame)
-        df = self.get_filtered_df()
+    def render_device_chart(self):
+        self.clear_chart_frame(self.device_frame)
         palette = self.get_palette()
-
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
-        ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
-
-        if {"device", "failure"}.issubset(df.columns):
-            tmp = df.copy()
-            tmp["failure_num"] = self.get_failure_series(tmp)
-
-            top_n = self.safe_top_n()
-            grouped = tmp.groupby("device")["failure_num"].sum().sort_values(ascending=False).head(top_n)
-
-            ax.bar(grouped.index.astype(str), grouped.values, color=palette["primary"], edgecolor=palette["accent"])
-            ax.set_title(f"Top {top_n} dispositivos con fallas")
-            ax.set_ylabel("Cantidad de fallas")
-            ax.tick_params(axis="x", rotation=35)
-
-        canvas = FigureCanvasTkAgg(fig, master=self.bar_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)"""
-        
-    def render_bar_chart(self):
-        self.clear_chart_frame(self.bar_frame)
-        df = self.get_filtered_df()
-        palette = self.get_palette()
+        summary = self.get_device_summary()
 
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if {"device", "failure"}.issubset(df.columns):
-            tmp = df.copy()
-            tmp["failure_num"] = self.get_failure_series(tmp)
-
-            top_n = self.safe_top_n()
-            grouped = tmp.groupby("device")["failure_num"].sum().sort_values(ascending=False).head(top_n)
+        if not summary.empty:
+            top = summary.head(self.safe_top_n())
 
             bars = ax.bar(
-                grouped.index.astype(str),
-                grouped.values,
+                top["device"].astype(str),
+                top["criticality_score"],
                 color=palette["series_2"],
-                edgecolor=palette["accent"]
+                edgecolor=palette["accent"],
+                alpha=0.88,
             )
 
             if len(bars) > 0:
                 bars[0].set_color(palette["series_5"])
 
-            ax.set_title(f"Top {top_n} dispositivos con fallas")
-            ax.set_ylabel("Cantidad de fallas")
+            ax.set_title("Equipos críticos")
+            ax.set_ylabel("Score de criticidad")
 
             for label in ax.get_xticklabels():
                 label.set_rotation(35)
@@ -959,121 +1047,195 @@ class MaintenanceView(ctk.CTkScrollableFrame):
 
             ax.margins(x=0.05)
 
-        canvas = FigureCanvasTkAgg(fig, master=self.bar_frame)
+        canvas = FigureCanvasTkAgg(fig, master=self.device_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    """def render_corr_chart(self):
-        self.clear_chart_frame(self.corr_frame)
-        df = self.get_filtered_df()
+    def render_box_chart(self):
+        self.clear_chart_frame(self.box_frame)
         palette = self.get_palette()
-
-        fig = Figure(figsize=(5.2, 3.4), dpi=100)
-        ax = fig.add_subplot(111)
-        self.style_axes(fig, ax)
-
-        tmp = df.copy()
-        if "failure" in tmp.columns:
-            tmp["failure_num"] = self.get_failure_series(tmp)
-
-        numeric_cols = tmp.select_dtypes(include=["number"]).columns.tolist()
-
-        if len(numeric_cols) >= 2:
-            corr = tmp[numeric_cols].corr(numeric_only=True)
-            img = ax.imshow(corr.values, aspect="auto")
-            ax.set_title("Correlación métricas vs falla")
-            ax.set_xticks(range(len(corr.columns)))
-            ax.set_yticks(range(len(corr.columns)))
-            ax.set_xticklabels(corr.columns, rotation=45, ha="right", fontsize=8)
-            ax.set_yticklabels(corr.columns, fontsize=8)
-
-            cbar = fig.colorbar(img, ax=ax, fraction=0.046, pad=0.04)
-            cbar.ax.yaxis.set_tick_params(color=palette["text"])
-            for label in cbar.ax.get_yticklabels():
-                label.set_color(palette["text"])
-
-        canvas = FigureCanvasTkAgg(fig, master=self.corr_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)"""
-        
-    def render_corr_chart(self):
-        self.clear_chart_frame(self.corr_frame)
         df = self.get_filtered_df()
-        palette = self.get_palette()
+        metric = self.metric_var.get()
 
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        tmp = df.copy()
-        if "failure" in tmp.columns:
-            tmp["failure_num"] = self.get_failure_series(tmp)
+        if df is not None and metric in df.columns and "failure" in df.columns:
+            temp = pd.DataFrame({
+                "metric": pd.to_numeric(df[metric], errors="coerce"),
+                "failure_num": self.get_failure_series(df),
+            }).dropna()
 
-        numeric_cols = tmp.select_dtypes(include=["number"]).columns.tolist()
+            if not temp.empty and temp["failure_num"].nunique() > 1:
+                data_ok = temp.loc[temp["failure_num"] == 0, "metric"].values
+                data_fail = temp.loc[temp["failure_num"] == 1, "metric"].values
 
-        if len(numeric_cols) >= 2:
-            corr = tmp[numeric_cols].corr(numeric_only=True)
-            img = ax.imshow(corr.values, aspect="auto", cmap="YlGnBu")
+                data = []
+                labels = []
 
-            ax.set_title("Correlación métricas vs falla")
-            ax.set_xticks(range(len(corr.columns)))
-            ax.set_yticks(range(len(corr.columns)))
-            ax.set_xticklabels(corr.columns, rotation=45, ha="right", fontsize=8)
-            ax.set_yticklabels(corr.columns, fontsize=8)
+                if len(data_ok) > 0:
+                    data.append(data_ok)
+                    labels.append("Sin falla")
+                if len(data_fail) > 0:
+                    data.append(data_fail)
+                    labels.append("Con falla")
 
-            cbar = fig.colorbar(img, ax=ax, fraction=0.046, pad=0.04)
-            cbar.ax.yaxis.set_tick_params(color=palette["chart_text"])
-            for label in cbar.ax.get_yticklabels():
-                label.set_color(palette["chart_text"])
+                if data:
+                    box = ax.boxplot(data, labels=labels, patch_artist=True)
 
-        canvas = FigureCanvasTkAgg(fig, master=self.corr_frame)
+                    for patch in box["boxes"]:
+                        patch.set_facecolor(palette["series_1"])
+                        patch.set_alpha(0.70)
+                        patch.set_edgecolor(palette["chart_axis"])
+
+                    for median in box["medians"]:
+                        median.set_color(palette["series_2"])
+
+                    for whisker in box["whiskers"]:
+                        whisker.set_color(palette["chart_axis"])
+
+                    for cap in box["caps"]:
+                        cap.set_color(palette["chart_axis"])
+
+                    ax.set_title(f"Comparación de {metric}")
+                    ax.set_ylabel(metric)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.box_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def render_report_main(self):
+        df = self.get_filtered_df()
+        if df is None or df.empty:
+            return
+
+        failure_series = self.get_failure_series(df)
+        effects = self.get_metric_effects(df)
+        device_summary = self.get_device_summary(df)
+        daily = self.get_daily_failure_summary(df)
+
+        lines = []
+
+        if len(failure_series) == len(df):
+            lines.append(f"Resultado principal: la tasa de falla del conjunto analizado es {failure_series.mean() * 100:.3f}%.")
+
+        if not device_summary.empty:
+            top_device = device_summary.iloc[0]
+            lines.append(
+                f"Equipo prioritario: {top_device['device']} lidera la criticidad con {int(top_device['failures'])} fallas y tasa de {top_device['failure_rate'] * 100:.3f}%."
+            )
+
+        if not effects.empty:
+            top_metric = effects.iloc[0]
+            direction = "sube" if top_metric["effect_size"] > 0 else "baja"
+            lines.append(
+                f"Métrica más discriminante: {top_metric['metric']} {direction} cuando aparece falla, con efecto {top_metric['effect_size']:+.2f}."
+            )
+
+        if not daily.empty and len(daily) >= 10:
+            recent = daily["failure_rate"].tail(5).mean()
+            previous = daily["failure_rate"].iloc[-10:-5].mean()
+            trend = self.classify_recent_risk(recent, previous)
+            lines.append(f"Señal temporal: el riesgo reciente está {trend.lower()} respecto al bloque previo.")
+
+        self.report_main_box.configure(state="normal")
+        self.report_main_box.delete("1.0", tk.END)
+        self.report_main_box.insert("1.0", "\n".join(lines))
+        self.report_main_box.configure(state="disabled")
+
+    def render_report_chart(self):
+        for child in self.report_chart_frame.winfo_children():
+            child.destroy()
+
+        palette = self.get_palette()
+        summary = self.get_device_summary()
+
+        fig = create_figure(palette, figsize=(7.2, 4.2), dpi=100)
+        ax = fig.add_subplot(111)
+        style_axes(fig, ax, palette)
+
+        if not summary.empty:
+            top = summary.head(self.safe_top_n())
+
+            bars = ax.bar(
+                top["device"].astype(str),
+                top["criticality_score"],
+                color=palette["series_2"],
+                edgecolor=palette["accent"],
+                alpha=0.88,
+            )
+
+            if len(bars) > 0:
+                bars[0].set_color(palette["series_5"])
+
+            ax.set_title("Equipos críticos para priorización")
+            ax.set_ylabel("Score de criticidad")
+
+            for label in ax.get_xticklabels():
+                label.set_rotation(35)
+                label.set_ha("right")
+
+            ax.margins(x=0.05)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.report_chart_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def render_conclusions(self, initial=False):
         df = self.get_filtered_df()
-        metric = self.metric_var.get()
+        if df is None or df.empty:
+            return
 
         lines = []
+        failure_series = self.get_failure_series(df)
+        effects = self.get_metric_effects(df)
+        device_summary = self.get_device_summary(df)
+        metric = self.metric_var.get()
 
-        if "failure" in df.columns and not df.empty:
-            failure_series = self.get_failure_series(df)
-            lines.append(f"- La tasa de falla del conjunto filtrado es: {failure_series.mean() * 100:.2f}%")
+        if len(failure_series) == len(df):
+            lines.append(f"- La tasa de falla observada es {failure_series.mean() * 100:.3f}%.")
 
-        if {"device", "failure"}.issubset(df.columns) and not df.empty:
-            tmp = df.copy()
-            tmp["failure_num"] = self.get_failure_series(tmp)
-            grouped = tmp.groupby("device")["failure_num"].sum().sort_values(ascending=False)
-            if not grouped.empty:
-                lines.append(f"- El dispositivo con más fallas es: {grouped.index[0]}")
+        if not device_summary.empty:
+            top_device = device_summary.iloc[0]
+            lines.append(
+                f"- El equipo con mayor criticidad actual es {top_device['device']}."
+            )
 
-        if metric in df.columns and "failure" in df.columns and pd.api.types.is_numeric_dtype(df[metric]):
-            tmp = df[[metric]].copy()
-            tmp["failure_num"] = self.get_failure_series(df)
+        if not effects.empty:
+            top_metric = effects.iloc[0]
+            lines.append(
+                f"- La métrica con mayor capacidad de separación es {top_metric['metric']} ({top_metric['effect_size']:+.2f})."
+            )
 
-            mean_fail = tmp.loc[tmp["failure_num"] == 1, metric].mean()
-            mean_ok = tmp.loc[tmp["failure_num"] == 0, metric].mean()
+        if metric in df.columns and "failure" in df.columns:
+            temp = pd.DataFrame({
+                "metric": pd.to_numeric(df[metric], errors="coerce"),
+                "failure_num": self.get_failure_series(df),
+            }).dropna()
 
-            if pd.notna(mean_fail) and pd.notna(mean_ok):
-                lines.append(f"- Promedio de {metric} con falla: {mean_fail:.2f}")
-                lines.append(f"- Promedio de {metric} sin falla: {mean_ok:.2f}")
+            if not temp.empty and temp["failure_num"].nunique() > 1:
+                mean_fail = temp.loc[temp["failure_num"] == 1, "metric"].mean()
+                mean_ok = temp.loc[temp["failure_num"] == 0, "metric"].mean()
 
-        x = self.x_var.get()
-        y = self.y_var.get()
-        if {x, y}.issubset(df.columns):
-            corr = df[[x, y]].corr(numeric_only=True).iloc[0, 1]
-            lines.append(f"- La correlación entre {x} y {y} es: {corr:.3f}")
+                if pd.notna(mean_fail) and pd.notna(mean_ok):
+                    lines.append(f"- En {metric}, el promedio con falla es {mean_fail:.2f} y sin falla es {mean_ok:.2f}.")
 
         if self.profile and not self.profile["missing_df"].empty:
             top_missing = self.profile["missing_df"].iloc[0]
-            lines.append(f"- La columna con más nulos es: {top_missing['column']} ({int(top_missing['missing'])})")
+            lines.append(f"- La columna con más nulos es {top_missing['column']} ({int(top_missing['missing'])}).")
 
         if initial:
-            lines.append("- El dataset fue cargado y perfilado. Falta decidir si aplicas limpieza adicional.")
+            lines.append("- Acción sugerida: validar primero la calidad del dataset y luego revisar equipos críticos y métricas discriminantes.")
         else:
-            lines.append("- El análisis refleja los filtros, orden y limpieza actualmente aplicados.")
+            if not device_summary.empty and not effects.empty:
+                lines.append(
+                    f"- Acción sugerida: priorizar revisión de {device_summary.iloc[0]['device']} y vigilar especialmente {effects.iloc[0]['metric']}."
+                )
+            else:
+                lines.append("- Acción sugerida: complementar la lectura con una revisión más específica de equipos y métricas.")
 
         self.conclusion_box.configure(state="normal")
         self.conclusion_box.delete("1.0", tk.END)
         self.conclusion_box.insert("1.0", "\n".join(lines))
-        self.conclusion_box.configure(state="disabled") 
+        self.conclusion_box.configure(state="disabled")

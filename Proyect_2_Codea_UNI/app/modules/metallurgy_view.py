@@ -5,8 +5,8 @@ from tkinter import filedialog, messagebox, ttk
 import customtkinter as ctk
 import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from app.ui.chart_theme import create_figure, style_axes, style_legend
 
+from app.ui.chart_theme import create_figure, style_axes, style_legend
 from app.core.constants import MODULE_CONFIG
 from app.services.file_loader import load_file
 from app.services.validator import validate_module_file
@@ -32,6 +32,7 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         self.profile = None
         self.clean_summary = None
 
+        # Estado de limpieza
         self.drop_duplicates_var = tk.BooleanVar(value=True)
         self.convert_numeric_var = tk.BooleanVar(value=True)
         self.convert_dates_var = tk.BooleanVar(value=True)
@@ -39,51 +40,276 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         self.fill_numeric_var = tk.StringVar(value="None")
         self.fill_categorical_var = tk.StringVar(value="None")
 
+        # Estado de interfaz
         self.metric_var = tk.StringVar(value="% Silica Concentrate")
         self.x_var = tk.StringVar(value="% Iron Concentrate")
         self.y_var = tk.StringVar(value="% Silica Concentrate")
-        self.top_n_var = tk.StringVar(value="10")
+        self.top_n_var = tk.StringVar(value="8")
         self.sort_by_var = tk.StringVar(value="date")
         self.sort_order_var = tk.StringVar(value="Asc")
         self.view_mode_var = tk.StringVar(value="Analisis")
 
+        # Cache ligero para reducir recálculo
+        self._cache = {
+            "filtered_df": None,
+            "filtered_key": None,
+            "numeric_cols": None,
+            "numeric_cols_key": None,
+            "corr_series": None,
+            "corr_key": None,
+            "time_agg": None,
+            "time_agg_key": None,
+        }
+
         configure_treeview_style()
         self.build_ui()
 
+    # ------------------------------------------------------------------
+    # Utilidades base
+    # ------------------------------------------------------------------
     def get_palette(self):
         try:
             return self.master.master.palette
         except Exception:
             return PALETTE
 
-    def numeric_columns(self, df):
-        if df is None:
-            return []
-        return df.select_dtypes(include=["number"]).columns.tolist()
+    def clear_analysis_cache(self):
+        self._cache["filtered_df"] = None
+        self._cache["filtered_key"] = None
+        self._cache["numeric_cols"] = None
+        self._cache["numeric_cols_key"] = None
+        self._cache["corr_series"] = None
+        self._cache["corr_key"] = None
+        self._cache["time_agg"] = None
+        self._cache["time_agg_key"] = None
+
+    def silica_col(self):
+        return "% Silica Concentrate"
+
+    def iron_col(self):
+        return "% Iron Concentrate"
+
+    def candidate_process_cols(self):
+        return [
+            "Amina Flow",
+            "Starch Flow",
+            "Ore Pulp Density",
+            "Ore Pulp pH",
+            "Flotation Column 01 Air Flow",
+            "Flotation Column 02 Air Flow",
+            "Flotation Column 03 Air Flow",
+            "Flotation Column 04 Air Flow",
+        ]
 
     def safe_top_n(self):
         try:
-            n = int(self.top_n_var.get())
-            return max(3, min(n, 20))
+            value = int(self.top_n_var.get())
+            return max(3, min(value, 12))
         except Exception:
-            return 10
+            return 8
+
+    def safe_numeric_series(self, df, col):
+        if df is None or col not in df.columns:
+            return pd.Series(dtype="float64")
+        return pd.to_numeric(df[col], errors="coerce")
+
+    def filtered_key(self):
+        if self.df is None:
+            return None
+        return (
+            id(self.df),
+            self.sort_by_var.get(),
+            self.sort_order_var.get(),
+        )
 
     def get_filtered_df(self):
         if self.df is None:
             return None
 
-        df = self.df.copy()
+        cache_key = self.filtered_key()
+        if self._cache["filtered_key"] == cache_key and self._cache["filtered_df"] is not None:
+            return self._cache["filtered_df"]
+
+        df = self.df
 
         sort_col = self.sort_by_var.get()
+        ascending = self.sort_order_var.get() == "Asc"
+
         if sort_col in df.columns:
-            ascending = self.sort_order_var.get() == "Asc"
             try:
-                df = df.sort_values(sort_col, ascending=ascending)
+                filtered = df.sort_values(sort_col, ascending=ascending, kind="mergesort")
             except Exception:
-                pass
+                filtered = df
+        else:
+            filtered = df
 
-        return df
+        self._cache["filtered_key"] = cache_key
+        self._cache["filtered_df"] = filtered
+        return filtered
 
+    def numeric_columns(self, df):
+        if df is None:
+            return []
+
+        key = (id(df), tuple(df.columns))
+        if self._cache["numeric_cols_key"] == key and self._cache["numeric_cols"] is not None:
+            return self._cache["numeric_cols"]
+
+        cols = df.select_dtypes(include=["number"]).columns.tolist()
+        self._cache["numeric_cols_key"] = key
+        self._cache["numeric_cols"] = cols
+        return cols
+
+    def critical_columns(self):
+        cols = [self.silica_col(), self.iron_col(), "date"]
+        return [c for c in cols if self.df is not None and c in self.df.columns]
+
+    def current_metric(self):
+        metric = self.metric_var.get()
+        df = self.get_filtered_df()
+        if df is not None and metric in df.columns:
+            return metric
+        return self.silica_col() if df is not None and self.silica_col() in df.columns else metric
+
+    def get_time_agg(self, metric):
+        df = self.get_filtered_df()
+        if df is None or "date" not in df.columns or metric not in df.columns:
+            return pd.DataFrame()
+
+        cache_key = (id(df), metric)
+        if self._cache["time_agg_key"] == cache_key and self._cache["time_agg"] is not None:
+            return self._cache["time_agg"]
+
+        temp = df[["date", metric]].copy()
+        temp[metric] = pd.to_numeric(temp[metric], errors="coerce")
+        temp["date"] = pd.to_datetime(temp["date"], errors="coerce")
+        temp = temp.dropna(subset=["date", metric])
+
+        if temp.empty:
+            result = pd.DataFrame()
+        else:
+            temp["day"] = temp["date"].dt.date
+            result = temp.groupby("day", as_index=False)[metric].mean()
+            result["rolling_5"] = result[metric].rolling(window=5, min_periods=2).mean()
+
+        self._cache["time_agg_key"] = cache_key
+        self._cache["time_agg"] = result
+        return result
+
+    def get_corr_series(self):
+        df = self.get_filtered_df()
+        silica_col = self.silica_col()
+
+        if df is None or silica_col not in df.columns:
+            return pd.Series(dtype="float64")
+
+        cache_key = (id(df), silica_col)
+        if self._cache["corr_key"] == cache_key and self._cache["corr_series"] is not None:
+            return self._cache["corr_series"]
+
+        numeric_cols = self.numeric_columns(df)
+        if silica_col not in numeric_cols or len(numeric_cols) < 2:
+            result = pd.Series(dtype="float64")
+        else:
+            valid_cols = []
+            for col in numeric_cols:
+                try:
+                    if df[col].notna().sum() < 20:
+                        continue
+                    if df[col].nunique(dropna=True) <= 1:
+                        continue
+                    valid_cols.append(col)
+                except Exception:
+                    continue
+
+            if silica_col not in valid_cols or len(valid_cols) < 2:
+                result = pd.Series(dtype="float64")
+            else:
+                try:
+                    corr = df[valid_cols].corr(numeric_only=True)[silica_col].dropna()
+                    corr = corr.drop(labels=[silica_col], errors="ignore")
+
+                    # Favorecer columnas de proceso útiles, sin impedir otras
+                    ordered = []
+                    preferred = [c for c in self.candidate_process_cols() if c in corr.index]
+                    remaining = [c for c in corr.index if c not in preferred]
+                    ordered = preferred + remaining
+                    corr = corr.loc[ordered].sort_values(key=lambda s: s.abs(), ascending=False)
+                    result = corr
+                except Exception:
+                    result = pd.Series(dtype="float64")
+
+        self._cache["corr_key"] = cache_key
+        self._cache["corr_series"] = result
+        return result
+
+    def format_number(self, value, decimals=2, default="N/D"):
+        try:
+            if pd.isna(value):
+                return default
+            return f"{float(value):.{decimals}f}"
+        except Exception:
+            return default
+
+    def classify_stability(self, std_value):
+        try:
+            if pd.isna(std_value):
+                return "N/D"
+            if std_value <= 0.35:
+                return "Alta"
+            if std_value <= 0.75:
+                return "Media"
+            return "Baja"
+        except Exception:
+            return "N/D"
+
+    def classify_trend(self, recent_mean, previous_mean):
+        try:
+            if pd.isna(recent_mean) or pd.isna(previous_mean):
+                return "N/D"
+            delta = recent_mean - previous_mean
+            if abs(delta) < 0.03:
+                return "Estable"
+            if delta > 0:
+                return "Empeorando"
+            return "Mejorando"
+        except Exception:
+            return "N/D"
+
+    def rolling_variability(self, metric):
+        df = self.get_time_agg(metric)
+        if df.empty or metric not in df.columns:
+            return pd.Series(dtype="float64")
+
+        temp = df[[metric]].copy()
+        temp["window_std"] = temp[metric].rolling(window=5, min_periods=3).std()
+        return temp["window_std"].dropna()
+
+    def update_treeview(self, tree, dataframe, width=120, height_limit=30):
+        tree.delete(*tree.get_children())
+        cols = list(dataframe.columns)
+        tree["columns"] = cols
+
+        for col in cols:
+            tree.heading(col, text=str(col))
+            tree.column(col, width=width, anchor="center")
+
+        for _, row in dataframe.head(height_limit).iterrows():
+            values = []
+            for v in row.tolist():
+                if isinstance(v, float):
+                    values.append(f"{v:.3f}")
+                else:
+                    values.append(str(v))
+            tree.insert("", "end", values=values)
+
+    def clear_chart_frame(self, frame):
+        for child in frame.winfo_children():
+            child.destroy()
+
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
     def build_ui(self):
         palette = self.get_palette()
 
@@ -93,7 +319,7 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         make_title(header, "Metallurgy Module").pack(anchor="w")
         make_subtitle(
             header,
-            "Control de flotación, calidad del concentrado y apoyo para toma de decisiones.",
+            "Control de calidad del concentrado, estabilidad del proceso y lectura accionable para decisión.",
         ).pack(anchor="w", pady=(4, 0))
 
         actions = ctk.CTkFrame(self, fg_color="transparent")
@@ -102,7 +328,11 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         make_button(actions, "Importar CSV/Excel", self.import_file).pack(side="left")
         make_button(actions, "Aplicar limpieza", self.apply_cleaning).pack(side="left", padx=10)
 
-        self.info_label = ctk.CTkLabel(actions, text="Sin archivo cargado", text_color=palette["muted"])
+        self.info_label = ctk.CTkLabel(
+            actions,
+            text="Sin archivo cargado",
+            text_color=palette["muted"],
+        )
         self.info_label.pack(side="left", padx=8)
 
         mode_box = ctk.CTkFrame(actions, fg_color="transparent")
@@ -132,18 +362,23 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         self.kpi_wrap.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.main_kpis = {}
-        main_labels = [
+        labels = [
             ("silica", "Sílice promedio"),
             ("iron", "Hierro promedio"),
-            ("driver", "Variable clave"),
-            ("peak", "Pico de sílice"),
+            ("stability", "Estabilidad sílice"),
+            ("trend", "Tendencia reciente"),
         ]
 
-        for i, (key, title_txt) in enumerate(main_labels):
+        for i, (key, title_txt) in enumerate(labels):
             card = make_card(self.kpi_wrap)
             card.grid(row=0, column=i, sticky="nsew", padx=6, pady=4)
 
-            ctk.CTkLabel(card, text=title_txt, text_color=palette["muted"]).pack(anchor="w", padx=12, pady=(10, 2))
+            ctk.CTkLabel(
+                card,
+                text=title_txt,
+                text_color=palette["muted"],
+            ).pack(anchor="w", padx=12, pady=(10, 2))
+
             value = ctk.CTkLabel(
                 card,
                 text="-",
@@ -171,7 +406,12 @@ class MetallurgyView(ctk.CTkScrollableFrame):
             card = make_card(self.tech_wrap)
             card.grid(row=0, column=i, sticky="nsew", padx=6, pady=4)
 
-            ctk.CTkLabel(card, text=title_txt, text_color=palette["muted"]).pack(anchor="w", padx=12, pady=(10, 2))
+            ctk.CTkLabel(
+                card,
+                text=title_txt,
+                text_color=palette["muted"],
+            ).pack(anchor="w", padx=12, pady=(10, 2))
+
             value = ctk.CTkLabel(
                 card,
                 text="-",
@@ -203,35 +443,77 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         ctk.CTkCheckBox(clean_box, text="Quitar filas muy nulas", variable=self.drop_high_null_rows_var).grid(row=0, column=3, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(clean_box, text="Relleno numérico", text_color=palette["muted"]).grid(row=1, column=0, padx=8, pady=6, sticky="w")
-        ctk.CTkOptionMenu(clean_box, values=["None", "mean", "median", "zero"], variable=self.fill_numeric_var, width=120).grid(row=1, column=1, padx=8, pady=6, sticky="w")
+        ctk.CTkOptionMenu(
+            clean_box,
+            values=["None", "mean", "median", "zero"],
+            variable=self.fill_numeric_var,
+            width=120,
+        ).grid(row=1, column=1, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(clean_box, text="Relleno categórico", text_color=palette["muted"]).grid(row=1, column=2, padx=8, pady=6, sticky="w")
-        ctk.CTkOptionMenu(clean_box, values=["None", "unknown", "mode"], variable=self.fill_categorical_var, width=120).grid(row=1, column=3, padx=8, pady=6, sticky="w")
+        ctk.CTkOptionMenu(
+            clean_box,
+            values=["None", "unknown", "mode"],
+            variable=self.fill_categorical_var,
+            width=120,
+        ).grid(row=1, column=3, padx=8, pady=6, sticky="w")
 
         filter_box = ctk.CTkFrame(self.prep_card, fg_color="transparent")
         filter_box.pack(fill="x", padx=12, pady=(0, 12))
 
         ctk.CTkLabel(filter_box, text="Ordenar por", text_color=palette["muted"]).grid(row=0, column=0, padx=8, pady=6, sticky="w")
-        self.sort_menu = ctk.CTkOptionMenu(filter_box, values=["date"], variable=self.sort_by_var, command=lambda _: self.refresh_all())
+        self.sort_menu = ctk.CTkOptionMenu(
+            filter_box,
+            values=["date"],
+            variable=self.sort_by_var,
+            command=lambda _: self.refresh_current_view(),
+        )
         self.sort_menu.grid(row=0, column=1, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Orden", text_color=palette["muted"]).grid(row=0, column=2, padx=8, pady=6, sticky="w")
-        ctk.CTkOptionMenu(filter_box, values=["Asc", "Desc"], variable=self.sort_order_var, command=lambda _: self.refresh_all(), width=90).grid(row=0, column=3, padx=8, pady=6, sticky="w")
+        ctk.CTkOptionMenu(
+            filter_box,
+            values=["Asc", "Desc"],
+            variable=self.sort_order_var,
+            command=lambda _: self.refresh_current_view(),
+            width=90,
+        ).grid(row=0, column=3, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Variable X", text_color=palette["muted"]).grid(row=1, column=0, padx=8, pady=6, sticky="w")
-        self.x_menu = ctk.CTkOptionMenu(filter_box, values=["% Iron Concentrate"], variable=self.x_var, command=lambda _: self.refresh_all())
+        self.x_menu = ctk.CTkOptionMenu(
+            filter_box,
+            values=[self.iron_col()],
+            variable=self.x_var,
+            command=lambda _: self.refresh_current_view(),
+        )
         self.x_menu.grid(row=1, column=1, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Variable Y", text_color=palette["muted"]).grid(row=1, column=2, padx=8, pady=6, sticky="w")
-        self.y_menu = ctk.CTkOptionMenu(filter_box, values=["% Silica Concentrate"], variable=self.y_var, command=lambda _: self.refresh_all())
+        self.y_menu = ctk.CTkOptionMenu(
+            filter_box,
+            values=[self.silica_col()],
+            variable=self.y_var,
+            command=lambda _: self.refresh_current_view(),
+        )
         self.y_menu.grid(row=1, column=3, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Métrica principal", text_color=palette["muted"]).grid(row=1, column=4, padx=8, pady=6, sticky="w")
-        self.metric_menu = ctk.CTkOptionMenu(filter_box, values=["% Silica Concentrate"], variable=self.metric_var, command=lambda _: self.refresh_all())
+        self.metric_menu = ctk.CTkOptionMenu(
+            filter_box,
+            values=[self.silica_col()],
+            variable=self.metric_var,
+            command=lambda _: self.refresh_current_view(),
+        )
         self.metric_menu.grid(row=1, column=5, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Top N", text_color=palette["muted"]).grid(row=1, column=6, padx=8, pady=6, sticky="w")
-        ctk.CTkOptionMenu(filter_box, values=["5", "8", "10", "12", "15", "20"], variable=self.top_n_var, command=lambda _: self.refresh_all(), width=80).grid(row=1, column=7, padx=8, pady=6, sticky="w")
+        ctk.CTkOptionMenu(
+            filter_box,
+            values=["4", "6", "8", "10", "12"],
+            variable=self.top_n_var,
+            command=lambda _: self.refresh_current_view(),
+            width=80,
+        ).grid(row=1, column=7, padx=8, pady=6, sticky="w")
 
     def build_profile_section(self):
         palette = self.get_palette()
@@ -246,9 +528,9 @@ class MetallurgyView(ctk.CTkScrollableFrame):
             text_color=palette["text"],
         ).pack(anchor="w", padx=14, pady=(14, 8))
 
-        self.profile_box = ctk.CTkTextbox(self.profile_card, height=150)
+        self.profile_box = ctk.CTkTextbox(self.profile_card, height=155)
         self.profile_box.pack(fill="x", padx=12, pady=(0, 12))
-        self.profile_box.insert("1.0", "Aquí aparecerá el diagnóstico y los cambios aplicados.")
+        self.profile_box.insert("1.0", "Aquí aparecerá el diagnóstico y la calidad del dataset.")
         self.profile_box.configure(state="disabled")
 
     def build_analysis_zone(self):
@@ -261,7 +543,7 @@ class MetallurgyView(ctk.CTkScrollableFrame):
 
         ctk.CTkLabel(
             self.preview_card,
-            text="Vista previa filtrada",
+            text="Vista previa operativa",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=palette["text"],
         ).pack(anchor="w", padx=14, pady=(14, 8))
@@ -273,6 +555,7 @@ class MetallurgyView(ctk.CTkScrollableFrame):
 
         self.tree = ttk.Treeview(wrap, show="headings", height=12)
         self.tree.grid(row=0, column=0, sticky="nsew")
+
         sb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview)
         sb.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=sb.set)
@@ -301,18 +584,18 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         self.bar_card = make_card(grid)
         self.bar_card.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
 
-        self.hist_card = make_card(grid)
-        self.hist_card.grid(row=1, column=1, sticky="nsew", padx=6, pady=6)
+        self.stability_card = make_card(grid)
+        self.stability_card.grid(row=1, column=1, sticky="nsew", padx=6, pady=6)
 
-        for card, txt in [
-            (self.scatter_card, "Relación entre variables"),
-            (self.line_card, "Tendencia temporal"),
-            (self.bar_card, "Variables más asociadas"),
-            (self.hist_card, "Distribución principal"),
+        for card, title_txt in [
+            (self.scatter_card, "Hierro vs sílice"),
+            (self.line_card, "Tendencia temporal de sílice"),
+            (self.bar_card, "Variables más asociadas a sílice"),
+            (self.stability_card, "Estabilidad del proceso"),
         ]:
             ctk.CTkLabel(
                 card,
-                text=txt,
+                text=title_txt,
                 font=ctk.CTkFont(size=14, weight="bold"),
                 text_color=palette["text"],
             ).pack(anchor="w", padx=12, pady=(10, 6))
@@ -326,15 +609,15 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         self.bar_frame = ctk.CTkFrame(self.bar_card, fg_color="transparent")
         self.bar_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        self.hist_frame = ctk.CTkFrame(self.hist_card, fg_color="transparent")
-        self.hist_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.stability_frame = ctk.CTkFrame(self.stability_card, fg_color="transparent")
+        self.stability_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
         self.summary_card = make_card(self.analysis_zone)
         self.summary_card.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
         ctk.CTkLabel(
             self.summary_card,
-            text="Resumen operativo",
+            text="Resumen operativo crítico",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=palette["text"],
         ).pack(anchor="w", padx=14, pady=(14, 8))
@@ -344,8 +627,9 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         wrap2.grid_rowconfigure(0, weight=1)
         wrap2.grid_columnconfigure(0, weight=1)
 
-        self.summary_table = ttk.Treeview(wrap2, show="headings", height=12)
+        self.summary_table = ttk.Treeview(wrap2, show="headings", height=10)
         self.summary_table.grid(row=0, column=0, sticky="nsew")
+
         sb2 = ttk.Scrollbar(wrap2, orient="vertical", command=self.summary_table.yview)
         sb2.grid(row=0, column=1, sticky="ns")
         self.summary_table.configure(yscrollcommand=sb2.set)
@@ -365,9 +649,9 @@ class MetallurgyView(ctk.CTkScrollableFrame):
             text_color=palette["text"],
         ).pack(anchor="w", padx=14, pady=(14, 8))
 
-        self.report_main_box = ctk.CTkTextbox(self.report_main_card, height=120)
+        self.report_main_box = ctk.CTkTextbox(self.report_main_card, height=130)
         self.report_main_box.pack(fill="x", padx=12, pady=(0, 12))
-        self.report_main_box.insert("1.0", "Aquí aparecerá la lectura principal.")
+        self.report_main_box.insert("1.0", "Aquí aparecerá la lectura principal del proceso.")
         self.report_main_box.configure(state="disabled")
 
         self.report_chart_card = make_card(self.report_zone)
@@ -393,19 +677,14 @@ class MetallurgyView(ctk.CTkScrollableFrame):
             text_color=palette["text"],
         ).pack(anchor="w", padx=14, pady=(14, 8))
 
-        self.conclusion_box = ctk.CTkTextbox(self.conclusion_card, height=150)
+        self.conclusion_box = ctk.CTkTextbox(self.conclusion_card, height=170)
         self.conclusion_box.pack(fill="x", padx=12, pady=(0, 12))
-        self.conclusion_box.insert("1.0", "Aquí aparecerán las conclusiones.")
+        self.conclusion_box.insert("1.0", "Aquí aparecerán conclusiones y acción sugerida.")
         self.conclusion_box.configure(state="disabled")
 
-    """def toggle_mode(self):
-        if self.view_mode_var.get() == "Analisis":
-            self.report_zone.pack_forget()
-            self.analysis_zone.pack(fill="both", expand=True, pady=(0, 0))
-        else:
-            self.analysis_zone.pack_forget()
-            self.report_zone.pack(fill="both", expand=True, pady=(0, 0))"""
-            
+    # ------------------------------------------------------------------
+    # Flujo principal
+    # ------------------------------------------------------------------
     def toggle_mode(self):
         if self.view_mode_var.get() == "Analisis":
             self.report_zone.pack_forget()
@@ -415,7 +694,7 @@ class MetallurgyView(ctk.CTkScrollableFrame):
             self.report_zone.pack(fill="both", expand=True, pady=(0, 0))
 
         if self.df is not None:
-            self.refresh_all(initial=False)
+            self.refresh_current_view()
 
     def import_file(self):
         path = filedialog.askopenfilename(
@@ -429,17 +708,21 @@ class MetallurgyView(ctk.CTkScrollableFrame):
             raw_df = load_file(path)
             is_valid, missing = validate_module_file(
                 raw_df,
-                MODULE_CONFIG["Metallurgy"]["required_columns"]
+                MODULE_CONFIG["Metallurgy"]["required_columns"],
             )
 
             if not is_valid:
-                messagebox.showerror("Archivo inválido", f"Faltan columnas requeridas: {missing}")
+                messagebox.showerror(
+                    "Archivo inválido",
+                    f"Faltan columnas requeridas: {missing}",
+                )
                 return
 
             self.raw_df = raw_df.copy()
             self.df = raw_df.copy()
             self.profile = profile_dataframe(self.raw_df)
             self.clean_summary = None
+            self.clear_analysis_cache()
 
             self.info_label.configure(text=os.path.basename(path))
             self.app_state.set_dataset("Metallurgy", self.raw_df, self.df)
@@ -466,13 +749,15 @@ class MetallurgyView(ctk.CTkScrollableFrame):
 
         self.df, self.clean_summary = clean_dataframe(self.raw_df, options)
         self.profile = profile_dataframe(self.df)
+        self.clear_analysis_cache()
+
         self.app_state.set_dataset("Metallurgy", self.raw_df, self.df)
 
         self.update_controls()
         self.refresh_all(initial=False)
 
     def update_controls(self):
-        if self.df is None:
+        if self.df is None or self.df.empty:
             return
 
         cols = list(self.df.columns)
@@ -485,27 +770,20 @@ class MetallurgyView(ctk.CTkScrollableFrame):
             self.y_menu.configure(values=num_cols)
             self.metric_menu.configure(values=num_cols)
 
-            self.x_var.set("% Iron Concentrate" if "% Iron Concentrate" in num_cols else num_cols[0])
-            self.y_var.set("% Silica Concentrate" if "% Silica Concentrate" in num_cols else num_cols[min(1, len(num_cols)-1)])
-            self.metric_var.set("% Silica Concentrate" if "% Silica Concentrate" in num_cols else num_cols[0])
+            default_x = self.iron_col() if self.iron_col() in num_cols else num_cols[0]
+            default_y = self.silica_col() if self.silica_col() in num_cols else num_cols[min(1, len(num_cols) - 1)]
+            default_metric = self.silica_col() if self.silica_col() in num_cols else num_cols[0]
 
-    """def refresh_all(self, initial=False):
-        if self.df is None:
-            return
-        self.render_kpis()
-        self.render_profile_box(initial)
-        self.render_preview_table()
-        self.render_summary_table()
-        self.render_all_charts()
-        self.render_report_main()
-        self.render_report_chart()
-        self.render_conclusions(initial)"""
+            self.x_var.set(default_x)
+            self.y_var.set(default_y)
+            self.metric_var.set(default_metric)
+
     def refresh_all(self, initial=False):
         if self.df is None:
             return
 
         self.render_kpis()
-        self.render_profile_box(initial)
+        self.render_profile_box(initial=initial)
 
         if self.view_mode_var.get() == "Analisis":
             self.render_preview_table()
@@ -514,45 +792,71 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         else:
             self.render_report_main()
             self.render_report_chart()
-            self.render_conclusions(initial)
+            self.render_conclusions(initial=initial)
 
+    def refresh_current_view(self):
+        if self.df is None:
+            return
+
+        self.clear_analysis_cache()
+        self.render_kpis()
+
+        if self.view_mode_var.get() == "Analisis":
+            self.render_preview_table()
+            self.render_summary_table()
+            self.render_all_charts()
+        else:
+            self.render_report_main()
+            self.render_report_chart()
+            self.render_conclusions(initial=False)
+
+    # ------------------------------------------------------------------
+    # Render de texto y tablas
+    # ------------------------------------------------------------------
     def render_kpis(self):
         df = self.get_filtered_df()
-        metric = self.metric_var.get()
+        if df is None or self.profile is None:
+            return
+
+        silica_col = self.silica_col()
+        iron_col = self.iron_col()
 
         self.tech_kpis["rows"].configure(text=f"{len(df):,}")
         self.tech_kpis["cols"].configure(text=str(df.shape[1]))
         self.tech_kpis["duplicates"].configure(text=str(self.profile["duplicates"]))
         self.tech_kpis["nulls"].configure(text=str(self.profile["total_nulls"]))
 
-        silica_col = "% Silica Concentrate"
-        iron_col = "% Iron Concentrate"
+        silica_mean = self.safe_numeric_series(df, silica_col).mean() if silica_col in df.columns else None
+        iron_mean = self.safe_numeric_series(df, iron_col).mean() if iron_col in df.columns else None
+        silica_std = self.safe_numeric_series(df, silica_col).std() if silica_col in df.columns else None
 
-        self.main_kpis["silica"].configure(
-            text=f"{df[silica_col].mean():.2f}" if silica_col in df.columns else "N/D"
+        self.main_kpis["silica"].configure(text=self.format_number(silica_mean))
+        self.main_kpis["iron"].configure(text=self.format_number(iron_mean))
+        self.main_kpis["stability"].configure(
+            text=f"{self.classify_stability(silica_std)} ({self.format_number(silica_std)})"
+            if silica_col in df.columns else "N/D"
         )
-        self.main_kpis["iron"].configure(
-            text=f"{df[iron_col].mean():.2f}" if iron_col in df.columns else "N/D"
-        )
 
-        driver = "N/D"
+        trend_text = "N/D"
         if silica_col in df.columns:
-            numeric_cols = self.numeric_columns(df)
-            if len(numeric_cols) >= 2:
-                corr = df[numeric_cols].corr(numeric_only=True)[silica_col].dropna().sort_values(key=lambda s: s.abs(), ascending=False)
-                corr = corr.drop(labels=[silica_col], errors="ignore")
-                if not corr.empty:
-                    driver = f"{corr.index[0]} ({corr.iloc[0]:.3f})"
-        self.main_kpis["driver"].configure(text=driver)
+            series = self.safe_numeric_series(df, silica_col).dropna()
+            if len(series) >= 10:
+                recent = series.tail(5).mean()
+                previous = series.iloc[-10:-5].mean()
+                label = self.classify_trend(recent, previous)
+                delta = recent - previous if pd.notna(recent) and pd.notna(previous) else None
+                if delta is not None and pd.notna(delta):
+                    trend_text = f"{label} ({delta:+.2f})"
+                else:
+                    trend_text = label
+        self.main_kpis["trend"].configure(text=trend_text)
 
-        peak = "N/D"
-        if silica_col in df.columns:
-            peak = f"{df[silica_col].max():.2f}"
-        self.main_kpis["peak"].configure(text=peak)
+    def render_profile_box(self, initial=False):
+        if self.profile is None:
+            return
 
-    def render_profile_box(self, initial):
         lines = [
-            "Diagnóstico general",
+            "Diagnóstico general del dataset",
             "",
             f"- Filas: {self.profile['rows']}",
             f"- Columnas: {self.profile['cols']}",
@@ -560,19 +864,31 @@ class MetallurgyView(ctk.CTkScrollableFrame):
             f"- Nulos totales: {self.profile['total_nulls']}",
             f"- Columnas numéricas detectables: {len(self.profile['numeric_like_cols'])}",
             f"- Columnas fecha detectables: {len(self.profile['date_like_cols'])}",
+            f"- Columnas constantes: {len(self.profile['constant_columns'])}",
             "",
-            "Sugerencias:",
+            "Lectura de calidad:",
         ]
 
+        critical = self.critical_columns()
+        if self.df is not None and critical:
+            for col in critical:
+                try:
+                    missing = int(self.df[col].isna().sum())
+                    pct = (missing / len(self.df)) * 100 if len(self.df) > 0 else 0
+                    lines.append(f"  • {col}: {missing} faltantes ({pct:.2f}%)")
+                except Exception:
+                    continue
+
+        lines.extend(["", "Sugerencias automáticas:"])
         if self.profile["suggestions"]:
-            lines.extend([f"  • {s}" for s in self.profile["suggestions"]])
+            lines.extend([f"  • {item}" for item in self.profile["suggestions"]])
         else:
             lines.append("  • No se detectaron problemas relevantes.")
 
         if not initial and self.clean_summary:
             lines.extend([
                 "",
-                "Cambios aplicados:",
+                "Resultado de la limpieza:",
                 f"  • Filas originales: {self.clean_summary['rows_original']}",
                 f"  • Filas finales: {self.clean_summary['rows_clean']}",
                 f"  • Nulos originales: {self.clean_summary['nulls_original']}",
@@ -586,99 +902,90 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         self.profile_box.configure(state="disabled")
 
     def render_preview_table(self):
-        df = self.get_filtered_df().head(15)
-
-        self.tree.delete(*self.tree.get_children())
-        cols = list(df.columns)
-        self.tree["columns"] = cols
-
-        for col in cols:
-            self.tree.heading(col, text=col)
-            self.tree.column(col, width=110, anchor="center")
-
-        for _, row in df.iterrows():
-            self.tree.insert("", "end", values=[str(v) for v in row.tolist()])
+        df = self.get_filtered_df()
+        if df is None:
+            return
+        preview = df.head(15).copy()
+        self.update_treeview(self.tree, preview, width=115, height_limit=15)
 
     def render_summary_table(self):
         df = self.get_filtered_df()
-        silica_col = "% Silica Concentrate"
-        iron_col = "% Iron Concentrate"
-
-        cols = [c for c in [silica_col, iron_col, "Amina Flow", "Starch Flow", "Ore Pulp Density", "Ore Pulp pH"] if c in df.columns]
-        if not cols:
+        if df is None or df.empty:
             return
 
-        summary = pd.DataFrame({
-            "Variable": cols,
-            "Media": [df[c].mean() for c in cols],
-            "DesvStd": [df[c].std() for c in cols],
-            "Min": [df[c].min() for c in cols],
-            "Max": [df[c].max() for c in cols],
-        })
+        silica_col = self.silica_col()
+        iron_col = self.iron_col()
 
-        self.summary_table.delete(*self.summary_table.get_children())
-        table_cols = list(summary.columns)
-        self.summary_table["columns"] = table_cols
+        ordered_cols = [silica_col, iron_col] + self.candidate_process_cols()
+        ordered_cols = [c for c in ordered_cols if c in df.columns]
 
-        for col in table_cols:
-            self.summary_table.heading(col, text=col)
-            self.summary_table.column(col, width=120, anchor="center")
+        if not ordered_cols:
+            return
 
-        for _, row in summary.iterrows():
-            vals = []
-            for v in row.tolist():
-                vals.append(f"{v:.2f}" if isinstance(v, float) else str(v))
-            self.summary_table.insert("", "end", values=vals)
+        rows = []
+        for col in ordered_cols:
+            s = pd.to_numeric(df[col], errors="coerce")
+            if s.notna().sum() == 0:
+                continue
 
-    def clear_chart_frame(self, frame):
-        for child in frame.winfo_children():
-            child.destroy()
+            rows.append({
+                "Variable": col,
+                "Media": s.mean(),
+                "DesvStd": s.std(),
+                "P25": s.quantile(0.25),
+                "P75": s.quantile(0.75),
+                "Max": s.max(),
+            })
 
-    """def style_axes(self, fig, ax):
-        palette = self.get_palette()
-        fig.patch.set_facecolor(palette.get("chart_bg", palette["panel"]))
-        ax.set_facecolor(palette.get("chart_bg", palette["panel"]))
-        ax.grid(True, color=palette.get("chart_grid", palette["border"]), alpha=0.35, linestyle="--", linewidth=0.7)
+        summary = pd.DataFrame(rows)
+        if summary.empty:
+            return
 
-        for spine in ax.spines.values():
-            spine.set_color(palette["muted"])
+        self.update_treeview(self.summary_table, summary, width=130, height_limit=20)
 
-        ax.tick_params(axis="x", colors=palette["text"])
-        ax.tick_params(axis="y", colors=palette["text"])
-        ax.title.set_color(palette["text"])
-        ax.xaxis.label.set_color(palette["text"])
-        ax.yaxis.label.set_color(palette["text"])"""
-
+    # ------------------------------------------------------------------
+    # Render de charts
+    # ------------------------------------------------------------------
     def render_all_charts(self):
         self.render_scatter_chart()
         self.render_line_chart()
         self.render_bar_chart()
-        self.render_hist_chart()
+        self.render_stability_chart()
 
     def render_scatter_chart(self):
         self.clear_chart_frame(self.scatter_frame)
+
         df = self.get_filtered_df()
-        x, y = self.x_var.get(), self.y_var.get()
         palette = self.get_palette()
+        x = self.x_var.get()
+        y = self.y_var.get()
 
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if {x, y}.issubset(df.columns):
-            sample = df[[x, y]].dropna().head(2000)
-            #ax.scatter(sample[x], sample[y], s=18, alpha=0.7, color=palette["primary"], edgecolors="none")
-            ax.scatter(
-                sample[x],
-                sample[y],
-                s=18,
-                alpha=0.72,
-                color=palette["series_1"],
-                edgecolors="none"
-            )
-            ax.set_title(f"{x} vs {y}")
-            ax.set_xlabel(x)
-            ax.set_ylabel(y)
+        if df is not None and {x, y}.issubset(df.columns):
+            sample = df[[x, y]].copy()
+            sample[x] = pd.to_numeric(sample[x], errors="coerce")
+            sample[y] = pd.to_numeric(sample[y], errors="coerce")
+            sample = sample.dropna().head(2500)
+
+            if not sample.empty:
+                ax.scatter(
+                    sample[x],
+                    sample[y],
+                    s=18,
+                    alpha=0.70,
+                    color=palette["series_1"],
+                    edgecolors="none",
+                    label="Muestras",
+                )
+
+                corr_value = sample[[x, y]].corr(numeric_only=True).iloc[0, 1]
+                ax.set_title(f"{x} vs {y} | Corr: {corr_value:.3f}")
+                ax.set_xlabel(x)
+                ax.set_ylabel(y)
+                style_legend(ax, palette)
 
         canvas = FigureCanvasTkAgg(fig, master=self.scatter_frame)
         canvas.draw()
@@ -686,111 +993,174 @@ class MetallurgyView(ctk.CTkScrollableFrame):
 
     def render_line_chart(self):
         self.clear_chart_frame(self.line_frame)
-        df = self.get_filtered_df()
-        metric = self.metric_var.get()
+
         palette = self.get_palette()
+        silica_col = self.silica_col()
+        agg = self.get_time_agg(silica_col)
 
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if "date" in df.columns and metric in df.columns:
-            temp = df[["date", metric]].dropna().copy()
-            temp["day"] = pd.to_datetime(temp["date"], errors="coerce").dt.date
-            agg = temp.groupby("day")[metric].mean().reset_index()
-            #ax.plot(agg["day"], agg[metric], color=palette["primary"], linewidth=2)
-            ax.plot(agg["day"], agg[metric], color=palette["series_1"], linewidth=2)
-            ax.set_title(f"Tendencia temporal de {metric}")
-            #ax.tick_params(axis="x", rotation=35)
+        if not agg.empty and silica_col in agg.columns:
+            ax.plot(
+                agg["day"],
+                agg[silica_col],
+                color=palette["series_1"],
+                linewidth=1.8,
+                alpha=0.75,
+                label="Promedio diario",
+            )
+
+            if "rolling_5" in agg.columns:
+                ax.plot(
+                    agg["day"],
+                    agg["rolling_5"],
+                    color=palette["series_2"],
+                    linewidth=2.3,
+                    alpha=0.95,
+                    label="Media móvil 5",
+                )
+
+            mean_value = agg[silica_col].mean()
+            if pd.notna(mean_value):
+                ax.axhline(
+                    mean_value,
+                    color=palette["series_5"],
+                    linestyle="--",
+                    linewidth=1.4,
+                    alpha=0.85,
+                    label=f"Media ({mean_value:.2f})",
+                )
+
+            ax.set_title("Evolución temporal de sílice")
+            ax.set_xlabel("Fecha")
+            ax.set_ylabel(silica_col)
+
             for label in ax.get_xticklabels():
                 label.set_rotation(35)
                 label.set_ha("right")
-            
+
+            style_legend(ax, palette)
+
         canvas = FigureCanvasTkAgg(fig, master=self.line_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def render_bar_chart(self):
         self.clear_chart_frame(self.bar_frame)
-        df = self.get_filtered_df()
-        silica_col = "% Silica Concentrate"
+
         palette = self.get_palette()
+        corr = self.get_corr_series().head(self.safe_top_n())
 
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if silica_col in df.columns:
-            numeric_cols = self.numeric_columns(df)
-            if len(numeric_cols) >= 2:
-                corr = df[numeric_cols].corr(numeric_only=True)[silica_col].dropna().sort_values(key=lambda s: s.abs(), ascending=False)
-                corr = corr.drop(labels=[silica_col], errors="ignore").head(self.safe_top_n())
-                bars = ax.bar(
-                    corr.index.astype(str),
-                    corr.values,
-                    color=palette["series_2"],
-                    edgecolor=palette["accent"]
-                )
+        if not corr.empty:
+            colors = []
+            for value in corr.values:
+                colors.append(palette["series_3"] if value >= 0 else palette["series_5"])
 
-                if len(bars) > 0:
-                    bars[0].set_color(palette["series_5"])
+            bars = ax.bar(
+                corr.index.astype(str),
+                corr.values,
+                color=colors,
+                edgecolor=palette["accent"],
+                alpha=0.88,
+            )
 
-                ax.set_title(f"Top {self.safe_top_n()} variables asociadas a sílice")
+            ax.axhline(0, color=palette["chart_axis"], linewidth=1.1, alpha=0.9)
+            ax.set_title(f"Top {len(corr)} variables asociadas a sílice")
+            ax.set_ylabel("Correlación")
 
-                for label in ax.get_xticklabels():
-                    label.set_rotation(35)
-                    label.set_ha("right")
+            for label in ax.get_xticklabels():
+                label.set_rotation(35)
+                label.set_ha("right")
 
+            if len(bars) > 0:
                 ax.margins(x=0.05)
 
         canvas = FigureCanvasTkAgg(fig, master=self.bar_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    def render_hist_chart(self):
-        self.clear_chart_frame(self.hist_frame)
-        df = self.get_filtered_df()
-        metric = self.metric_var.get()
+    def render_stability_chart(self):
+        self.clear_chart_frame(self.stability_frame)
+
         palette = self.get_palette()
+        silica_col = self.silica_col()
+        variability = self.rolling_variability(silica_col)
 
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if metric in df.columns:
-            data = df[metric].dropna()
-            ax.hist(
-                data,
-                bins=30,
-                color=palette["series_1"],
-                alpha=0.80,
-                edgecolor=palette["chart_axis"]
+        if not variability.empty:
+            ax.plot(
+                variability.index,
+                variability.values,
+                color=palette["series_3"],
+                linewidth=2.0,
+                alpha=0.92,
             )
 
-        canvas = FigureCanvasTkAgg(fig, master=self.hist_frame)
+            mean_std = variability.mean()
+            if pd.notna(mean_std):
+                ax.axhline(
+                    mean_std,
+                    color=palette["series_2"],
+                    linestyle="--",
+                    linewidth=1.4,
+                    alpha=0.9,
+                )
+
+            ax.set_title("Variabilidad móvil de sílice")
+            ax.set_xlabel("Ventanas sucesivas")
+            ax.set_ylabel("Std móvil")
+
+        canvas = FigureCanvasTkAgg(fig, master=self.stability_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
+    # ------------------------------------------------------------------
+    # Reporte ejecutivo
+    # ------------------------------------------------------------------
     def render_report_main(self):
         df = self.get_filtered_df()
-        silica_col = "% Silica Concentrate"
-        iron_col = "% Iron Concentrate"
+        if df is None or df.empty:
+            return
+
+        silica_col = self.silica_col()
+        iron_col = self.iron_col()
+        corr = self.get_corr_series()
+
         lines = []
 
         if silica_col in df.columns:
-            lines.append(f"Resultado principal: el promedio de sílice en concentrado es {df[silica_col].mean():.2f}.")
-            lines.append(f"Pico observado de sílice: {df[silica_col].max():.2f}.")
+            silica = self.safe_numeric_series(df, silica_col)
+            lines.append(f"Resultado principal: la sílice promedio del concentrado se ubica en {self.format_number(silica.mean())}.")
+            lines.append(f"Comportamiento del proceso: la estabilidad actual de sílice es {self.classify_stability(silica.std())}.")
+
+            if len(silica.dropna()) >= 10:
+                recent = silica.dropna().tail(5).mean()
+                previous = silica.dropna().iloc[-10:-5].mean()
+                trend = self.classify_trend(recent, previous)
+                delta = recent - previous if pd.notna(recent) and pd.notna(previous) else None
+                if delta is not None and pd.notna(delta):
+                    lines.append(f"Lectura reciente: la sílice muestra una tendencia {trend.lower()} con variación de {delta:+.2f} frente al bloque previo.")
 
         if iron_col in df.columns:
-            lines.append(f"Calidad del hierro: el promedio de hierro en concentrado es {df[iron_col].mean():.2f}.")
+            iron = self.safe_numeric_series(df, iron_col)
+            lines.append(f"Soporte de calidad: el hierro promedio en concentrado es {self.format_number(iron.mean())}.")
 
-        if silica_col in df.columns:
-            numeric_cols = self.numeric_columns(df)
-            if len(numeric_cols) >= 2:
-                corr = df[numeric_cols].corr(numeric_only=True)[silica_col].dropna().sort_values(key=lambda s: s.abs(), ascending=False)
-                corr = corr.drop(labels=[silica_col], errors="ignore")
-                if not corr.empty:
-                    lines.append(f"Variable más asociada a sílice: {corr.index[0]} ({corr.iloc[0]:.3f}).")
+        if not corr.empty:
+            top_var = corr.index[0]
+            top_corr = corr.iloc[0]
+            sign_text = "directa" if top_corr >= 0 else "inversa"
+            lines.append(
+                f"Señal dominante: la variable más asociada a sílice es {top_var} con relación {sign_text} ({top_corr:.3f})."
+            )
 
         self.report_main_box.configure(state="normal")
         self.report_main_box.delete("1.0", tk.END)
@@ -801,60 +1171,143 @@ class MetallurgyView(ctk.CTkScrollableFrame):
         for child in self.report_chart_frame.winfo_children():
             child.destroy()
 
-        df = self.get_filtered_df()
-        silica_col = "% Silica Concentrate"
         palette = self.get_palette()
+        silica_col = self.silica_col()
+        agg = self.get_time_agg(silica_col)
 
-        fig = create_figure(palette, figsize=(7.2, 4.2), dpi=100)
+        fig = create_figure(palette, figsize=(7.2, 4.3), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        if "date" in df.columns and silica_col in df.columns:
-            temp = df[["date", silica_col]].dropna().copy()
-            temp["day"] = pd.to_datetime(temp["date"], errors="coerce").dt.date
-            agg = temp.groupby("day")[silica_col].mean().reset_index()
-            ax.plot(agg["day"], agg[silica_col], color=palette["series_1"], linewidth=2)
-            ax.set_title("Tendencia principal de sílice")
+        if not agg.empty and silica_col in agg.columns:
+            ax.plot(
+                agg["day"],
+                agg[silica_col],
+                color=palette["series_1"],
+                linewidth=1.8,
+                alpha=0.75,
+                label="Promedio diario",
+            )
+
+            if "rolling_5" in agg.columns:
+                ax.plot(
+                    agg["day"],
+                    agg["rolling_5"],
+                    color=palette["series_2"],
+                    linewidth=2.4,
+                    alpha=0.95,
+                    label="Media móvil 5",
+                )
+
+            mean_value = agg[silica_col].mean()
+            if pd.notna(mean_value):
+                ax.axhline(
+                    mean_value,
+                    color=palette["series_5"],
+                    linestyle="--",
+                    linewidth=1.4,
+                    alpha=0.90,
+                    label=f"Media ({mean_value:.2f})",
+                )
+
+            ax.set_title("Visual principal: evolución de sílice")
+            ax.set_xlabel("Fecha")
+            ax.set_ylabel(silica_col)
+
             for label in ax.get_xticklabels():
                 label.set_rotation(35)
                 label.set_ha("right")
+
+            style_legend(ax, palette)
 
         canvas = FigureCanvasTkAgg(fig, master=self.report_chart_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    def render_conclusions(self, initial):
+    def render_conclusions(self, initial=False):
         df = self.get_filtered_df()
-        silica_col = "% Silica Concentrate"
-        iron_col = "% Iron Concentrate"
-        x, y = self.x_var.get(), self.y_var.get()
+        if df is None or df.empty:
+            return
+
+        silica_col = self.silica_col()
+        iron_col = self.iron_col()
+        x = self.x_var.get()
+        y = self.y_var.get()
 
         lines = []
+        corr = self.get_corr_series()
 
+        # Lectura principal
         if silica_col in df.columns:
-            lines.append(f"Hallazgo principal: la sílice promedio se ubica en {df[silica_col].mean():.2f}.")
+            silica = self.safe_numeric_series(df, silica_col)
+            silica_mean = silica.mean()
+            silica_std = silica.std()
+            lines.append(f"- La sílice promedio actual es {self.format_number(silica_mean)} y su estabilidad se clasifica como {self.classify_stability(silica_std)}.")
 
         if iron_col in df.columns:
-            lines.append(f"Soporte operativo: el hierro promedio en concentrado es {df[iron_col].mean():.2f}.")
+            iron = self.safe_numeric_series(df, iron_col)
+            lines.append(f"- El hierro promedio en concentrado es {self.format_number(iron.mean())}.")
 
+        # Relación operativa
         if {x, y}.issubset(df.columns):
-            corr = df[[x, y]].corr(numeric_only=True).iloc[0, 1]
-            if abs(corr) >= 0.7:
-                strength = "fuerte"
-            elif abs(corr) >= 0.4:
-                strength = "moderada"
+            temp = df[[x, y]].copy()
+            temp[x] = pd.to_numeric(temp[x], errors="coerce")
+            temp[y] = pd.to_numeric(temp[y], errors="coerce")
+            temp = temp.dropna()
+
+            if len(temp) >= 10:
+                corr_xy = temp[[x, y]].corr(numeric_only=True).iloc[0, 1]
+                if abs(corr_xy) >= 0.7:
+                    strength = "fuerte"
+                elif abs(corr_xy) >= 0.4:
+                    strength = "moderada"
+                else:
+                    strength = "débil"
+                lines.append(f"- La relación entre {x} y {y} es {strength} ({corr_xy:.3f}).")
+
+        # Variable de vigilancia
+        if not corr.empty:
+            top_var = corr.index[0]
+            top_value = corr.iloc[0]
+            if top_value >= 0:
+                lines.append(f"- La variable a vigilar primero es {top_var}, porque aumenta junto con la sílice ({top_value:.3f}).")
             else:
-                strength = "débil"
-            lines.append(f"Relación clave: la asociación entre {x} y {y} es {strength} ({corr:.3f}).")
+                lines.append(f"- La variable a vigilar primero es {top_var}, porque se mueve en sentido inverso a la sílice ({top_value:.3f}).")
 
+        # Calidad del dato
         if self.profile and not self.profile["missing_df"].empty:
-            top_missing = self.profile["missing_df"].iloc[0]
-            lines.append(f"Alerta de calidad: la columna {top_missing['column']} concentra {int(top_missing['missing'])} valores faltantes.")
+            critical_missing = self.profile["missing_df"]
+            critical_missing = critical_missing[critical_missing["column"].isin(self.critical_columns())]
+            if not critical_missing.empty:
+                top_missing = critical_missing.iloc[0]
+                lines.append(
+                    f"- La principal alerta de calidad está en {top_missing['column']}, con {int(top_missing['missing'])} faltantes."
+                )
 
+        # Acción sugerida
         if initial:
-            lines.append("Acción sugerida: revisar el perfil y decidir si conviene aplicar limpieza adicional antes de interpretar.")
+            lines.append("- Acción sugerida: revisar el diagnóstico del dataset antes de tomar decisiones operativas definitivas.")
         else:
-            lines.append("Acción sugerida: interpretar estos resultados considerando la limpieza y el contexto operativo actual.")
+            action = "- Acción sugerida: "
+            if silica_col in df.columns:
+                silica = self.safe_numeric_series(df, silica_col).dropna()
+                if len(silica) >= 10:
+                    recent = silica.tail(5).mean()
+                    previous = silica.iloc[-10:-5].mean()
+                    trend = self.classify_trend(recent, previous)
+
+                    if trend == "Empeorando":
+                        action += "priorizar revisión de las variables más asociadas a sílice y validar estabilidad reciente del proceso."
+                    elif trend == "Mejorando":
+                        action += "mantener seguimiento de la señal dominante y confirmar que la mejora se sostenga en próximas ventanas."
+                    else:
+                        action += "mantener control sobre estabilidad de sílice y revisar desvíos puntuales más que cambios estructurales."
+                else:
+                    action += "complementar esta lectura con más datos para validar tendencia reciente."
+            else:
+                action += "validar primero la disponibilidad de columnas críticas para una lectura confiable."
+
+            lines.append(action)
 
         self.conclusion_box.configure(state="normal")
         self.conclusion_box.delete("1.0", tk.END)
