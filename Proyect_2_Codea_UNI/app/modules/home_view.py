@@ -14,7 +14,7 @@ class HomeView(ctk.CTkFrame):
         self.chart_canvases = {}
         self.chart_frames = {}
         self.chart_options = {
-            "Mining": ctk.StringVar(value="Top operadores"),
+            "Mining": ctk.StringVar(value="Productividad en el tiempo"),
             "Geology": ctk.StringVar(value="Boxplot SiO2"),
             "Metallurgy": ctk.StringVar(value="Tendencia sílice"),
             "Maintenance": ctk.StringVar(value="Equipos críticos"),
@@ -552,7 +552,12 @@ class HomeView(ctk.CTkFrame):
 
     def get_chart_options(self, module_name):
         return {
-            "Mining": ["Top operadores", "Turnos", "Distribución M3"],
+            "Mining": [
+                "Productividad en el tiempo",
+                "Ranking de operadores",
+                "Desempeño por banco",
+                "Cumplimiento de perforación",
+            ],
             "Geology": ["Boxplot SiO2", "SiO2 vs TiO2", "Top litologías"],
             "Metallurgy": [
                 "Tendencia sílice",
@@ -591,6 +596,18 @@ class HomeView(ctk.CTkFrame):
             s = str(x)
             out.append(s if len(s) <= max_len else s[: max_len - 3] + "...")
         return out
+
+    def compliance_series_home(self, df, total_col, real_col):
+        if df is None or total_col not in df.columns or real_col not in df.columns:
+            return pd.Series(dtype="float64")
+
+        total = pd.to_numeric(df[total_col], errors="coerce")
+        real = pd.to_numeric(df[real_col], errors="coerce")
+
+        valid = total > 0
+        result = pd.Series(index=df.index, dtype="float64")
+        result.loc[valid] = (real.loc[valid] / total.loc[valid]) * 100
+        return result
 
     def get_failure_series(self, df):
         if df is None or "failure" not in df.columns:
@@ -694,7 +711,8 @@ class HomeView(ctk.CTkFrame):
 
         if chart_type in {
             "Top operadores", "Turnos", "Top litologías", "Equipos con fallas",
-            "Variables asociadas", "Equipos críticos", "Métricas discriminantes"
+            "Variables asociadas", "Equipos críticos", "Métricas discriminantes",
+            "Ranking de operadores", "Desempeño por banco"
         }:
             for label in ax.get_xticklabels():
                 label.set_rotation(18 if chart_type not in {"Variables asociadas", "Métricas discriminantes"} else 30)
@@ -710,7 +728,7 @@ class HomeView(ctk.CTkFrame):
                 label.set_ha("right")
             fig.subplots_adjust(left=0.08, right=0.985, top=0.88, bottom=0.24)
 
-        elif chart_type in {"Tendencia sílice", "Tendencia de falla"}:
+        elif chart_type in {"Tendencia sílice", "Tendencia de falla", "Productividad en el tiempo", "Cumplimiento de perforación"}:
             for label in ax.get_xticklabels():
                 label.set_rotation(18)
                 label.set_ha("right")
@@ -814,37 +832,196 @@ class HomeView(ctk.CTkFrame):
                 if module_name == "Mining":
                     operator_col = self.find_column(df, ["operator", "operador"])
                     shift_col = self.find_column(df, ["shift", "turno"])
+                    bench_col = self.find_column(df, ["bench", "banco"])
+                    ton_col = self.find_column(df, ["ton", "tons", "toneladas"])
                     m3_col = self.find_column(df, ["M3_volado", "m3_volado", "m3", "volume", "volumen"])
+                    date_col = self.find_column(df, ["drilling_date", "blasting_date", "date", "fecha"])
+                    total_h_col = self.find_column(df, ["altura_perforación_total", "altura perforación total", "altura_perforacion_total"])
+                    real_h_col = self.find_column(df, ["altura_perforación_real", "altura perforación real", "altura_perforacion_real"])
 
-                    if chart_type == "Top operadores" and operator_col and m3_col:
-                        temp = df[[operator_col, m3_col]].copy()
-                        temp[m3_col] = self.to_numeric_series(temp[m3_col])
-                        temp = temp.dropna(subset=[operator_col, m3_col])
+                    metric_col = ton_col if ton_col else m3_col
 
-                        if not temp.empty:
-                            grouped = temp.groupby(operator_col)[m3_col].mean().sort_values(ascending=False).head(6)
-                            labels = self.shorten_labels(grouped.index.tolist(), 13)
-                            ax.bar(labels, grouped.values, color=palette["series_1"])
-                            ax.set_title("Top operadores")
-                            rendered = True
-
-                    elif chart_type == "Turnos" and shift_col and m3_col:
-                        temp = df[[shift_col, m3_col]].copy()
-                        temp[m3_col] = self.to_numeric_series(temp[m3_col])
-                        temp = temp.dropna(subset=[shift_col, m3_col])
+                    if chart_type == "Productividad en el tiempo" and date_col and metric_col:
+                        temp = df[[date_col, metric_col]].copy()
+                        temp[metric_col] = self.to_numeric_series(temp[metric_col])
+                        temp[date_col] = pd.to_datetime(temp[date_col], errors="coerce")
+                        temp = temp.dropna(subset=[date_col, metric_col])
 
                         if not temp.empty:
-                            grouped = temp.groupby(shift_col)[m3_col].mean().sort_values(ascending=False)
-                            labels = self.shorten_labels(grouped.index.tolist(), 13)
-                            ax.bar(labels, grouped.values, color=palette["series_4"])
-                            ax.set_title("Rendimiento por turno")
+                            agg = temp.groupby(temp[date_col].dt.date)[metric_col].mean().reset_index()
+                            x = agg.iloc[:, 0]
+                            y = agg.iloc[:, 1]
+                            roll = y.rolling(window=7, min_periods=2).mean()
+
+                            ax.plot(
+                                x, y,
+                                color=palette["series_1"],
+                                linewidth=1.4,
+                                alpha=0.35,
+                                label="Promedio diario",
+                            )
+                            ax.plot(
+                                x, roll,
+                                color=palette["series_2"],
+                                linewidth=2.5,
+                                alpha=0.95,
+                                label="Media móvil 7",
+                            )
+
+                            ax.set_title(f"Evolución de {metric_col}")
+                            ax.set_xlabel("Fecha")
+                            ax.set_ylabel(metric_col)
+                            ax.legend(frameon=False, fontsize=8)
+                            ax.tick_params(axis="x", rotation=28)
                             rendered = True
 
-                    elif chart_type == "Distribución M3" and m3_col:
-                        data = self.to_numeric_series(df[m3_col]).dropna()
-                        if not data.empty:
-                            ax.hist(data, bins=20, color=palette["series_2"])
-                            ax.set_title("Distribución M3")
+                    elif chart_type == "Ranking de operadores" and operator_col and metric_col:
+                        temp = df[[operator_col, metric_col]].copy()
+                        temp[metric_col] = self.to_numeric_series(temp[metric_col])
+                        temp = temp.dropna(subset=[operator_col, metric_col])
+
+                        if not temp.empty:
+                            grouped = temp.groupby(operator_col)[metric_col].mean().sort_values(ascending=False).head(6)
+                            labels = self.shorten_labels(grouped.index.tolist(), 14)
+
+                            bars = ax.barh(
+                                labels,
+                                grouped.values,
+                                color=palette["series_3"],
+                                alpha=0.90
+                            )
+
+                            if len(bars) > 0:
+                                bars[-1].set_color(palette["series_2"])
+
+                            ax.set_title(f"Top 6 operadores por {metric_col}")
+                            ax.set_xlabel(metric_col)
+                            ax.set_ylabel("Operador")
+
+                            max_val = grouped.max() if len(grouped) else 0
+                            offset = max_val * 0.02 if max_val else 0.1
+
+                            for bar, value in zip(bars, grouped.values):
+                                ax.text(
+                                    value + offset,
+                                    bar.get_y() + bar.get_height() / 2,
+                                    f"{value:.2f}",
+                                    va="center",
+                                    fontsize=8,
+                                    color=palette["text"],
+                                )
+
+                            rendered = True
+
+                    elif chart_type == "Desempeño por banco" and bench_col and metric_col:
+                        temp = df[[bench_col, metric_col]].copy()
+                        temp[metric_col] = self.to_numeric_series(temp[metric_col])
+                        temp = temp.dropna(subset=[bench_col, metric_col])
+
+                        if not temp.empty:
+                            grouped = temp.groupby(bench_col).agg(
+                                productividad=(metric_col, "mean"),
+                                n=(metric_col, "count")
+                            ).reset_index()
+
+                            grouped = grouped[grouped["n"] >= 80].sort_values("productividad", ascending=False)
+
+                            if not grouped.empty:
+                                if len(grouped) > 8:
+                                    grouped = pd.concat([grouped.head(4), grouped.tail(4)], axis=0)
+
+                                grouped = grouped.drop_duplicates(subset=[bench_col]).sort_values("productividad", ascending=True)
+
+                                colors = [palette["series_3"]] * len(grouped)
+                                if len(colors) > 0:
+                                    colors[-1] = palette["series_2"]
+                                    colors[0] = palette["series_5"]
+
+                                bars = ax.barh(
+                                    grouped[bench_col].astype(str),
+                                    grouped["productividad"],
+                                    color=colors,
+                                    alpha=0.88,
+                                )
+
+                                ax.set_title(f"Bancos destacados por {metric_col}")
+                                ax.set_xlabel(metric_col)
+                                ax.set_ylabel("Banco")
+
+                                max_val = float(grouped["productividad"].max()) if len(grouped) else 0.0
+                                ax.set_xlim(0, max_val * 1.18 if max_val > 0 else 1)
+
+                                inside_offset = max_val * 0.02 if max_val > 0 else 0.1
+                                outside_offset = max_val * 0.015 if max_val > 0 else 0.1
+
+                                for bar, value, n in zip(bars, grouped["productividad"].values, grouped["n"].values):
+                                    label = f"{value:.1f} | n={int(n)}"
+                                    y_pos = bar.get_y() + bar.get_height() / 2
+
+                                    if value >= max_val * 0.22:
+                                        ax.text(
+                                            value - inside_offset,
+                                            y_pos,
+                                            label,
+                                            va="center",
+                                            ha="right",
+                                            fontsize=7.9,
+                                            color=palette["panel"],
+                                            fontweight="bold",
+                                        )
+                                    else:
+                                        ax.text(
+                                            value + outside_offset,
+                                            y_pos,
+                                            label,
+                                            va="center",
+                                            ha="left",
+                                            fontsize=7.9,
+                                            color=palette["text"],
+                                        )
+
+                                rendered = True
+
+                    elif chart_type == "Cumplimiento de perforación" and date_col and total_h_col and real_h_col:
+                        temp = df[[date_col, total_h_col, real_h_col]].copy()
+                        temp[date_col] = pd.to_datetime(temp[date_col], errors="coerce")
+                        temp["cumplimiento"] = self.compliance_series_home(df, total_h_col, real_h_col)
+                        temp = temp.dropna(subset=[date_col, "cumplimiento"])
+
+                        if not temp.empty:
+                            agg = temp.groupby(temp[date_col].dt.date)["cumplimiento"].mean().reset_index()
+                            x = agg.iloc[:, 0]
+                            y = agg.iloc[:, 1]
+                            roll = y.rolling(window=7, min_periods=2).mean()
+
+                            ax.plot(
+                                x, y,
+                                color=palette["series_3"],
+                                linewidth=1.2,
+                                alpha=0.30,
+                                label="Promedio diario",
+                            )
+                            ax.plot(
+                                x, roll,
+                                color=palette["series_2"],
+                                linewidth=2.4,
+                                alpha=0.95,
+                                label="Media móvil 7",
+                            )
+                            ax.axhline(
+                                100,
+                                color=palette["warning"],
+                                linestyle="--",
+                                linewidth=1.2,
+                                alpha=0.9,
+                                label="Objetivo 100%",
+                            )
+
+                            ax.set_title("Cumplimiento de perforación (%)")
+                            ax.set_xlabel("Fecha")
+                            ax.set_ylabel("% cumplimiento")
+                            ax.legend(frameon=False, fontsize=8)
+                            ax.tick_params(axis="x", rotation=28)
                             rendered = True
 
                     if not rendered:
