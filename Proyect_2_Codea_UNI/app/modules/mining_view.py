@@ -3,11 +3,11 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import customtkinter as ctk
+import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from app.ui.chart_theme import create_figure, style_axes, style_legend
-import numpy as np
 
+from app.ui.chart_theme import create_figure, style_axes
 from app.core.constants import MODULE_CONFIG
 from app.services.file_loader import load_file
 from app.services.validator import validate_module_file
@@ -44,19 +44,32 @@ class MiningView(ctk.CTkScrollableFrame):
         # Controles
         self.operator_var = tk.StringVar(value="Todos")
         self.shift_var = tk.StringVar(value="Todos")
-        self.metric_var = tk.StringVar(value="M3_volado")
-        self.x_var = tk.StringVar(value="tiempo_perforacion (min)")
-        self.y_var = tk.StringVar(value="M3_volado")
+        self.metric_var = tk.StringVar(value="ton")
         self.sort_by_var = tk.StringVar(value="operator")
         self.sort_order_var = tk.StringVar(value="Desc")
-        self.top_n_var = tk.StringVar(value="8")
+        self.top_n_var = tk.StringVar(value="6")
         self.view_mode_var = tk.StringVar(value="Analisis")
+
+        self._cache = {
+            "filtered_df": None,
+            "filtered_key": None,
+            "daily_summary": None,
+            "daily_key": None,
+            "operator_summary": None,
+            "operator_key": None,
+            "bench_summary": None,
+            "bench_key": None,
+            "compliance_daily": None,
+            "compliance_key": None,
+            "loss_summary": None,
+            "loss_key": None,
+        }
 
         configure_treeview_style()
         self.build_ui()
 
     # -------------------------------------------------
-    # helpers
+    # Helpers
     # -------------------------------------------------
     def get_palette(self):
         try:
@@ -64,39 +77,16 @@ class MiningView(ctk.CTkScrollableFrame):
         except Exception:
             return PALETTE
 
-    def numeric_columns(self, df):
-        if df is None:
-            return []
-        return df.select_dtypes(include=["number"]).columns.tolist()
+    def clear_analysis_cache(self):
+        for key in self._cache:
+            self._cache[key] = None
 
     def safe_top_n(self):
         try:
             n = int(self.top_n_var.get())
-            return max(3, min(n, 20))
+            return max(3, min(n, 15))
         except Exception:
-            return 8
-
-    def get_filtered_df(self):
-        if self.df is None:
-            return None
-
-        df = self.df.copy()
-
-        if "operator" in df.columns and self.operator_var.get() != "Todos":
-            df = df[df["operator"].astype(str) == self.operator_var.get()].copy()
-
-        if "shift" in df.columns and self.shift_var.get() != "Todos":
-            df = df[df["shift"].astype(str) == self.shift_var.get()].copy()
-
-        sort_col = self.sort_by_var.get()
-        if sort_col in df.columns:
-            ascending = self.sort_order_var.get() == "Asc"
-            try:
-                df = df.sort_values(sort_col, ascending=ascending)
-            except Exception:
-                pass
-
-        return df
+            return 6
 
     def time_col(self):
         return "tiempo_perforacion (min)"
@@ -110,10 +100,279 @@ class MiningView(ctk.CTkScrollableFrame):
     def grade_col(self):
         return "ley"
 
+    def delay_col(self):
+        return "demora"
+
+    def total_height_col(self):
+        return "altura_perforación_total"
+
+    def real_height_col(self):
+        return "altura_perforación_real"
+
+    def bench_col(self):
+        return "bench"
+
+    def drill_date_col(self):
+        for col in ["drilling_date", "blasting_date", "date", "fecha"]:
+            if self.df is not None and col in self.df.columns:
+                return col
+        return None
+
+    def format_number(self, value, decimals=2, default="N/D"):
+        try:
+            if pd.isna(value):
+                return default
+            return f"{float(value):.{decimals}f}"
+        except Exception:
+            return default
+
     def to_numeric_col(self, df, col):
         if df is None or col not in df.columns:
             return pd.Series(dtype="float64")
         return pd.to_numeric(df[col], errors="coerce")
+
+    def normalize_operator(self, value):
+        if pd.isna(value):
+            return value
+        return str(value).strip().upper().replace(" ", "")
+
+    def metric_label(self):
+        metric = self.metric_var.get()
+        return metric if metric in [self.ton_col(), self.volume_col()] else self.ton_col()
+
+    def efficiency_series(self, df):
+        metric = self.metric_label()
+        prod = self.to_numeric_col(df, metric)
+        time_s = self.to_numeric_col(df, self.time_col())
+
+        valid = time_s > 0
+        result = pd.Series(index=df.index, dtype="float64")
+        result.loc[valid] = prod.loc[valid] / time_s.loc[valid]
+        return result
+
+    def compliance_series(self, df):
+        total_col = self.total_height_col()
+        real_col = self.real_height_col()
+        if df is None or total_col not in df.columns or real_col not in df.columns:
+            return pd.Series(dtype="float64")
+
+        total = self.to_numeric_col(df, total_col)
+        real = self.to_numeric_col(df, real_col)
+        valid = total > 0
+
+        result = pd.Series(index=df.index, dtype="float64")
+        result.loc[valid] = (real.loc[valid] / total.loc[valid]) * 100
+        return result
+
+    def filtered_key(self):
+        if self.df is None:
+            return None
+        return (
+            id(self.df),
+            self.operator_var.get(),
+            self.shift_var.get(),
+            self.sort_by_var.get(),
+            self.sort_order_var.get(),
+            self.metric_var.get(),
+        )
+
+    def get_filtered_df(self):
+        if self.df is None:
+            return None
+
+        cache_key = self.filtered_key()
+        if self._cache["filtered_key"] == cache_key and self._cache["filtered_df"] is not None:
+            return self._cache["filtered_df"]
+
+        df = self.df.copy()
+
+        if "operator" in df.columns:
+            df["_operator_norm"] = df["operator"].apply(self.normalize_operator)
+
+        if "operator" in df.columns and self.operator_var.get() != "Todos":
+            selected = self.normalize_operator(self.operator_var.get())
+            df = df[df["_operator_norm"] == selected].copy()
+
+        if "shift" in df.columns and self.shift_var.get() != "Todos":
+            df = df[df["shift"].astype(str) == self.shift_var.get()].copy()
+
+        sort_col = self.sort_by_var.get()
+        if sort_col in df.columns:
+            ascending = self.sort_order_var.get() == "Asc"
+            try:
+                df = df.sort_values(sort_col, ascending=ascending, kind="mergesort")
+            except Exception:
+                pass
+
+        self._cache["filtered_key"] = cache_key
+        self._cache["filtered_df"] = df
+        return df
+
+    def get_daily_summary(self, df=None):
+        df = df if df is not None else self.get_filtered_df()
+        date_col = self.drill_date_col()
+
+        if df is None or df.empty or date_col is None:
+            return pd.DataFrame()
+
+        cache_key = (id(df), date_col, self.metric_label())
+        if self._cache["daily_key"] == cache_key and self._cache["daily_summary"] is not None:
+            return self._cache["daily_summary"]
+
+        metric = self.metric_label()
+
+        temp = pd.DataFrame({
+            "date": pd.to_datetime(df[date_col], errors="coerce", dayfirst=True),
+            "metric": self.to_numeric_col(df, metric),
+            "time": self.to_numeric_col(df, self.time_col()),
+        }).dropna(subset=["date", "metric"])
+
+        if temp.empty:
+            result = pd.DataFrame()
+        else:
+            temp["day"] = temp["date"].dt.date
+            result = temp.groupby("day").agg(
+                records=("metric", "count"),
+                productivity=("metric", "mean"),
+                perf_time=("time", "mean"),
+            ).reset_index()
+            result["efficiency"] = result["productivity"] / result["perf_time"].replace(0, np.nan)
+            result["rolling_productivity"] = result["productivity"].rolling(window=7, min_periods=2).mean()
+
+        self._cache["daily_key"] = cache_key
+        self._cache["daily_summary"] = result
+        return result
+
+    def get_operator_summary(self, df=None):
+        df = df if df is not None else self.get_filtered_df()
+        if df is None or df.empty or "operator" not in df.columns:
+            return pd.DataFrame()
+
+        cache_key = (id(df), self.metric_label())
+        if self._cache["operator_key"] == cache_key and self._cache["operator_summary"] is not None:
+            return self._cache["operator_summary"]
+
+        metric = self.metric_label()
+        temp = df.copy()
+        temp["_operator_norm"] = temp["operator"].apply(self.normalize_operator)
+        temp["_metric_num"] = self.to_numeric_col(temp, metric)
+        temp["_time_num"] = self.to_numeric_col(temp, self.time_col())
+
+        grouped = temp.groupby("_operator_norm").agg(
+            records=("_metric_num", "count"),
+            productivity=("_metric_num", "mean"),
+            time_avg=("_time_num", "mean"),
+        ).reset_index()
+
+        grouped["efficiency"] = grouped["productivity"] / grouped["time_avg"].replace(0, np.nan)
+        grouped = grouped.rename(columns={"_operator_norm": "operator"})
+        grouped = grouped.sort_values(["productivity", "efficiency"], ascending=False)
+
+        self._cache["operator_key"] = cache_key
+        self._cache["operator_summary"] = grouped
+        return grouped
+
+    def get_bench_summary(self, df=None):
+        df = df if df is not None else self.get_filtered_df()
+        bench_col = self.bench_col()
+        if df is None or df.empty or bench_col not in df.columns:
+            return pd.DataFrame()
+
+        cache_key = (id(df), self.metric_label(), bench_col)
+        if self._cache["bench_key"] == cache_key and self._cache["bench_summary"] is not None:
+            return self._cache["bench_summary"]
+
+        metric = self.metric_label()
+        temp = df.copy()
+        temp["_metric_num"] = self.to_numeric_col(temp, metric)
+        temp["_time_num"] = self.to_numeric_col(temp, self.time_col())
+
+        grouped = temp.groupby(bench_col).agg(
+            records=("_metric_num", "count"),
+            productivity=("_metric_num", "mean"),
+            time_avg=("_time_num", "mean"),
+        ).reset_index()
+
+        grouped = grouped[grouped["records"] >= 80].copy()
+        if grouped.empty:
+            result = pd.DataFrame()
+        else:
+            grouped["efficiency"] = grouped["productivity"] / grouped["time_avg"].replace(0, np.nan)
+            result = grouped.sort_values(["productivity", "efficiency"], ascending=False)
+
+        self._cache["bench_key"] = cache_key
+        self._cache["bench_summary"] = result
+        return result
+
+    def get_compliance_daily(self, df=None):
+        df = df if df is not None else self.get_filtered_df()
+        date_col = self.drill_date_col()
+
+        if df is None or df.empty or date_col is None:
+            return pd.DataFrame()
+
+        cache_key = (id(df), date_col, self.total_height_col(), self.real_height_col())
+        if self._cache["compliance_key"] == cache_key and self._cache["compliance_daily"] is not None:
+            return self._cache["compliance_daily"]
+
+        compliance = self.compliance_series(df)
+        temp = pd.DataFrame({
+            "date": pd.to_datetime(df[date_col], errors="coerce", dayfirst=True),
+            "compliance": compliance,
+        }).dropna(subset=["date", "compliance"])
+
+        if temp.empty:
+            result = pd.DataFrame()
+        else:
+            temp["day"] = temp["date"].dt.date
+            result = temp.groupby("day").agg(
+                records=("compliance", "count"),
+                compliance=("compliance", "mean"),
+            ).reset_index()
+            result["rolling_compliance"] = result["compliance"].rolling(window=7, min_periods=2).mean()
+
+        self._cache["compliance_key"] = cache_key
+        self._cache["compliance_daily"] = result
+        return result
+
+    def get_loss_summary(self, df=None):
+        df = df if df is not None else self.get_filtered_df()
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        cache_key = (id(df), self.metric_label())
+        if self._cache["loss_key"] == cache_key and self._cache["loss_summary"] is not None:
+            return self._cache["loss_summary"]
+
+        metric = self.metric_label()
+        temp = pd.DataFrame({
+            "time": self.to_numeric_col(df, self.time_col()),
+            "delay": self.to_numeric_col(df, self.delay_col()) if self.delay_col() in df.columns else np.nan,
+            "productivity": self.to_numeric_col(df, metric),
+        }).dropna(subset=["productivity"])
+
+        rows = []
+
+        if not temp["time"].dropna().empty:
+            corr_time = temp[["time", "productivity"]].dropna().corr(numeric_only=True).iloc[0, 1]
+            rows.append({
+                "Factor": "Tiempo perforación",
+                "Relacion": corr_time,
+                "Lectura": "Penaliza" if corr_time < 0 else "Acompaña",
+            })
+
+        if "delay" in temp.columns and temp["delay"].notna().sum() > 0:
+            corr_delay = temp[["delay", "productivity"]].dropna().corr(numeric_only=True).iloc[0, 1]
+            rows.append({
+                "Factor": "Demora",
+                "Relacion": corr_delay,
+                "Lectura": "Penaliza" if corr_delay < 0 else "Acompaña",
+            })
+
+        result = pd.DataFrame(rows)
+        self._cache["loss_key"] = cache_key
+        self._cache["loss_summary"] = result
+        return result
 
     def render_chart_placeholder(self, frame, title, subtitle="No hay datos suficientes para esta visual."):
         self.clear_chart_frame(frame)
@@ -146,8 +405,26 @@ class MiningView(ctk.CTkScrollableFrame):
 
         canvas = FigureCanvasTkAgg(fig, master=frame)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)    
-    
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def update_treeview(self, tree, dataframe, width=120, limit=30):
+        tree.delete(*tree.get_children())
+        cols = list(dataframe.columns)
+        tree["columns"] = cols
+
+        for col in cols:
+            tree.heading(col, text=str(col))
+            tree.column(col, width=width, anchor="center")
+
+        for _, row in dataframe.head(limit).iterrows():
+            values = []
+            for value in row.tolist():
+                if isinstance(value, float):
+                    values.append(f"{value:.3f}")
+                else:
+                    values.append(str(value))
+            tree.insert("", "end", values=values)
+
     # -------------------------------------------------
     # UI
     # -------------------------------------------------
@@ -160,7 +437,7 @@ class MiningView(ctk.CTkScrollableFrame):
         make_title(header, "Mining Module").pack(anchor="w")
         make_subtitle(
             header,
-            "Productividad de perforación, comparación operativa y soporte para toma de decisiones.",
+            "Productividad, operadores, bancos y cumplimiento de perforación.",
         ).pack(anchor="w", pady=(4, 0))
 
         actions = ctk.CTkFrame(self, fg_color="transparent")
@@ -204,10 +481,10 @@ class MiningView(ctk.CTkScrollableFrame):
 
         self.main_kpis = {}
         main_labels = [
-            ("leader", "Operador líder"),
-            ("avg_metric", "Promedio principal"),
-            ("shift_perf", "Turno dominante"),
-            ("stability", "Estabilidad operativa"),
+            ("productivity", "Productividad promedio"),
+            ("leader", "Operador benchmark"),
+            ("bench_perf", "Banco destacado"),
+            ("efficiency", "Eficiencia operativa"),
         ]
 
         for i, (key, title_txt) in enumerate(main_labels):
@@ -283,34 +560,26 @@ class MiningView(ctk.CTkScrollableFrame):
         filter_box.pack(fill="x", padx=12, pady=(0, 12))
 
         ctk.CTkLabel(filter_box, text="Operador", text_color=palette["muted"]).grid(row=0, column=0, padx=8, pady=6, sticky="w")
-        self.operator_menu = ctk.CTkOptionMenu(filter_box, values=["Todos"], variable=self.operator_var, command=lambda _: self.refresh_all())
+        self.operator_menu = ctk.CTkOptionMenu(filter_box, values=["Todos"], variable=self.operator_var, command=lambda _: self.refresh_current_view())
         self.operator_menu.grid(row=0, column=1, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Turno", text_color=palette["muted"]).grid(row=0, column=2, padx=8, pady=6, sticky="w")
-        self.shift_menu = ctk.CTkOptionMenu(filter_box, values=["Todos"], variable=self.shift_var, command=lambda _: self.refresh_all())
+        self.shift_menu = ctk.CTkOptionMenu(filter_box, values=["Todos"], variable=self.shift_var, command=lambda _: self.refresh_current_view())
         self.shift_menu.grid(row=0, column=3, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Ordenar por", text_color=palette["muted"]).grid(row=0, column=4, padx=8, pady=6, sticky="w")
-        self.sort_menu = ctk.CTkOptionMenu(filter_box, values=["operator"], variable=self.sort_by_var, command=lambda _: self.refresh_all())
+        self.sort_menu = ctk.CTkOptionMenu(filter_box, values=["operator"], variable=self.sort_by_var, command=lambda _: self.refresh_current_view())
         self.sort_menu.grid(row=0, column=5, padx=8, pady=6, sticky="w")
 
         ctk.CTkLabel(filter_box, text="Orden", text_color=palette["muted"]).grid(row=0, column=6, padx=8, pady=6, sticky="w")
-        ctk.CTkOptionMenu(filter_box, values=["Asc", "Desc"], variable=self.sort_order_var, command=lambda _: self.refresh_all(), width=90).grid(row=0, column=7, padx=8, pady=6, sticky="w")
+        ctk.CTkOptionMenu(filter_box, values=["Asc", "Desc"], variable=self.sort_order_var, command=lambda _: self.refresh_current_view(), width=90).grid(row=0, column=7, padx=8, pady=6, sticky="w")
 
-        ctk.CTkLabel(filter_box, text="Variable X", text_color=palette["muted"]).grid(row=1, column=0, padx=8, pady=6, sticky="w")
-        self.x_menu = ctk.CTkOptionMenu(filter_box, values=[self.time_col()], variable=self.x_var, command=lambda _: self.refresh_all())
-        self.x_menu.grid(row=1, column=1, padx=8, pady=6, sticky="w")
+        ctk.CTkLabel(filter_box, text="Métrica principal", text_color=palette["muted"]).grid(row=1, column=0, padx=8, pady=6, sticky="w")
+        self.metric_menu = ctk.CTkOptionMenu(filter_box, values=[self.ton_col()], variable=self.metric_var, command=lambda _: self.refresh_current_view())
+        self.metric_menu.grid(row=1, column=1, padx=8, pady=6, sticky="w")
 
-        ctk.CTkLabel(filter_box, text="Variable Y", text_color=palette["muted"]).grid(row=1, column=2, padx=8, pady=6, sticky="w")
-        self.y_menu = ctk.CTkOptionMenu(filter_box, values=[self.volume_col()], variable=self.y_var, command=lambda _: self.refresh_all())
-        self.y_menu.grid(row=1, column=3, padx=8, pady=6, sticky="w")
-
-        ctk.CTkLabel(filter_box, text="Métrica principal", text_color=palette["muted"]).grid(row=1, column=4, padx=8, pady=6, sticky="w")
-        self.metric_menu = ctk.CTkOptionMenu(filter_box, values=[self.volume_col()], variable=self.metric_var, command=lambda _: self.refresh_all())
-        self.metric_menu.grid(row=1, column=5, padx=8, pady=6, sticky="w")
-
-        ctk.CTkLabel(filter_box, text="Top N", text_color=palette["muted"]).grid(row=1, column=6, padx=8, pady=6, sticky="w")
-        ctk.CTkOptionMenu(filter_box, values=["5", "8", "10", "12", "15"], variable=self.top_n_var, command=lambda _: self.refresh_all(), width=80).grid(row=1, column=7, padx=8, pady=6, sticky="w")
+        ctk.CTkLabel(filter_box, text="Top N", text_color=palette["muted"]).grid(row=1, column=2, padx=8, pady=6, sticky="w")
+        ctk.CTkOptionMenu(filter_box, values=["5", "6", "8", "10", "12"], variable=self.top_n_var, command=lambda _: self.refresh_current_view(), width=80).grid(row=1, column=3, padx=8, pady=6, sticky="w")
 
     def build_status_section(self):
         palette = self.get_palette()
@@ -371,23 +640,23 @@ class MiningView(ctk.CTkScrollableFrame):
         grid.grid_columnconfigure((0, 1), weight=1)
         grid.grid_rowconfigure((0, 1), weight=1)
 
-        self.scatter_card = make_card(grid)
-        self.scatter_card.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.time_card = make_card(grid)
+        self.time_card.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
 
-        self.bar_card = make_card(grid)
-        self.bar_card.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
+        self.operator_card = make_card(grid)
+        self.operator_card.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
 
-        self.shift_card = make_card(grid)
-        self.shift_card.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
+        self.bench_card = make_card(grid)
+        self.bench_card.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
 
-        self.hist_card = make_card(grid)
-        self.hist_card.grid(row=1, column=1, sticky="nsew", padx=6, pady=6)
+        self.compliance_card = make_card(grid)
+        self.compliance_card.grid(row=1, column=1, sticky="nsew", padx=6, pady=6)
 
         for card, txt in [
-            (self.scatter_card, "Tiempo vs rendimiento"),
-            (self.bar_card, "Top operadores"),
-            (self.shift_card, "Comparación por turno"),
-            (self.hist_card, "Distribución del indicador clave"),
+            (self.time_card, "Productividad en el tiempo"),
+            (self.operator_card, "Ranking de operadores"),
+            (self.bench_card, "Desempeño por banco"),
+            (self.compliance_card, "Cumplimiento de perforación"),
         ]:
             ctk.CTkLabel(
                 card,
@@ -396,17 +665,17 @@ class MiningView(ctk.CTkScrollableFrame):
                 text_color=palette["text"],
             ).pack(anchor="w", padx=12, pady=(10, 6))
 
-        self.scatter_frame = ctk.CTkFrame(self.scatter_card, fg_color="transparent")
-        self.scatter_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.time_frame = ctk.CTkFrame(self.time_card, fg_color="transparent")
+        self.time_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        self.bar_frame = ctk.CTkFrame(self.bar_card, fg_color="transparent")
-        self.bar_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.operator_frame = ctk.CTkFrame(self.operator_card, fg_color="transparent")
+        self.operator_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        self.shift_frame = ctk.CTkFrame(self.shift_card, fg_color="transparent")
-        self.shift_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.bench_frame = ctk.CTkFrame(self.bench_card, fg_color="transparent")
+        self.bench_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        self.hist_frame = ctk.CTkFrame(self.hist_card, fg_color="transparent")
-        self.hist_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.compliance_frame = ctk.CTkFrame(self.compliance_card, fg_color="transparent")
+        self.compliance_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
         self.summary_card = make_card(self.analysis_zone)
         self.summary_card.pack(fill="both", expand=True, padx=20, pady=(0, 10))
@@ -444,7 +713,7 @@ class MiningView(ctk.CTkScrollableFrame):
             text_color=palette["text"],
         ).pack(anchor="w", padx=14, pady=(14, 8))
 
-        self.report_main_box = ctk.CTkTextbox(self.report_main_card, height=120)
+        self.report_main_box = ctk.CTkTextbox(self.report_main_card, height=130)
         self.report_main_box.pack(fill="x", padx=12, pady=(0, 12))
         self.report_main_box.insert("1.0", "Aquí aparecerá la lectura principal de productividad.")
         self.report_main_box.configure(state="disabled")
@@ -472,19 +741,11 @@ class MiningView(ctk.CTkScrollableFrame):
             text_color=palette["text"],
         ).pack(anchor="w", padx=14, pady=(14, 8))
 
-        self.conclusion_box = ctk.CTkTextbox(self.conclusion_card, height=160)
+        self.conclusion_box = ctk.CTkTextbox(self.conclusion_card, height=170)
         self.conclusion_box.pack(fill="x", padx=12, pady=(0, 12))
         self.conclusion_box.insert("1.0", "Aquí aparecerán conclusiones para la decisión operativa.")
         self.conclusion_box.configure(state="disabled")
 
-    """def toggle_mode(self):
-        if self.view_mode_var.get() == "Analisis":
-            self.report_zone.pack_forget()
-            self.analysis_zone.pack(fill="both", expand=True, pady=(0, 0))
-        else:
-            self.analysis_zone.pack_forget()
-            self.report_zone.pack(fill="both", expand=True, pady=(0, 0))"""
-            
     def toggle_mode(self):
         if self.view_mode_var.get() == "Analisis":
             self.report_zone.pack_forget()
@@ -494,10 +755,10 @@ class MiningView(ctk.CTkScrollableFrame):
             self.report_zone.pack(fill="both", expand=True, pady=(0, 0))
 
         if self.df is not None:
-            self.refresh_all(initial=False)
+            self.refresh_current_view()
 
     # -------------------------------------------------
-    # data flow
+    # Data flow
     # -------------------------------------------------
     def import_file(self):
         path = filedialog.askopenfilename(
@@ -522,6 +783,7 @@ class MiningView(ctk.CTkScrollableFrame):
             self.df = raw_df.copy()
             self.profile = profile_dataframe(self.raw_df)
             self.clean_summary = None
+            self.clear_analysis_cache()
 
             self.info_label.configure(text=os.path.basename(path))
             self.app_state.set_dataset("Mining", self.raw_df, self.df)
@@ -548,6 +810,8 @@ class MiningView(ctk.CTkScrollableFrame):
 
         self.df, self.clean_summary = clean_dataframe(self.raw_df, options)
         self.profile = profile_dataframe(self.df)
+        self.clear_analysis_cache()
+
         self.app_state.set_dataset("Mining", self.raw_df, self.df)
 
         self.update_controls()
@@ -561,19 +825,17 @@ class MiningView(ctk.CTkScrollableFrame):
         self.sort_menu.configure(values=cols)
         self.sort_by_var.set("operator" if "operator" in cols else cols[0])
 
-        num_cols = self.numeric_columns(self.df)
-        if num_cols:
-            self.x_menu.configure(values=num_cols)
-            self.y_menu.configure(values=num_cols)
-            self.metric_menu.configure(values=num_cols)
-
-            self.x_var.set(self.time_col() if self.time_col() in num_cols else num_cols[0])
-            self.y_var.set(self.volume_col() if self.volume_col() in num_cols else num_cols[min(1, len(num_cols) - 1)])
-            self.metric_var.set(self.volume_col() if self.volume_col() in num_cols else num_cols[0])
+        metric_candidates = [c for c in [self.ton_col(), self.volume_col()] if c in cols]
+        if metric_candidates:
+            self.metric_menu.configure(values=metric_candidates)
+            self.metric_var.set(self.ton_col() if self.ton_col() in metric_candidates else metric_candidates[0])
 
         if "operator" in self.df.columns:
-            operators = sorted(self.df["operator"].dropna().astype(str).unique().tolist())
-            self.operator_menu.configure(values=["Todos"] + operators[:300])
+            operators = sorted({
+                self.normalize_operator(x)
+                for x in self.df["operator"].dropna().tolist()
+            })
+            self.operator_menu.configure(values=["Todos"] + list(operators)[:300])
             self.operator_var.set("Todos")
 
         if "shift" in self.df.columns:
@@ -581,18 +843,6 @@ class MiningView(ctk.CTkScrollableFrame):
             self.shift_menu.configure(values=["Todos"] + shifts)
             self.shift_var.set("Todos")
 
-    """def refresh_all(self, initial=False):
-        if self.df is None:
-            return
-        self.render_kpis()
-        self.render_status_box(initial)
-        self.render_preview_table()
-        self.render_summary_table()
-        self.render_all_charts()
-        self.render_report_main()
-        self.render_report_chart()
-        self.render_conclusions(initial)"""
-        
     def refresh_all(self, initial=False):
         if self.df is None:
             return
@@ -609,53 +859,60 @@ class MiningView(ctk.CTkScrollableFrame):
             self.render_report_chart()
             self.render_conclusions(initial)
 
+    def refresh_current_view(self):
+        if self.df is None:
+            return
+
+        self.clear_analysis_cache()
+        self.render_kpis()
+
+        if self.view_mode_var.get() == "Analisis":
+            self.render_preview_table()
+            self.render_summary_table()
+            self.render_all_charts()
+        else:
+            self.render_report_main()
+            self.render_report_chart()
+            self.render_conclusions(False)
+
     # -------------------------------------------------
-    # renderers
+    # Renderers
     # -------------------------------------------------
     def render_kpis(self):
         df = self.get_filtered_df()
-        metric = self.metric_var.get()
-        time_col = self.time_col()
+        if df is None or self.profile is None:
+            return
+
+        metric = self.metric_label()
+        operator_summary = self.get_operator_summary(df)
+        bench_summary = self.get_bench_summary(df)
+        efficiency = self.efficiency_series(df).dropna()
 
         self.tech_kpis["rows"].configure(text=f"{len(df):,}")
         self.tech_kpis["cols"].configure(text=str(df.shape[1]))
         self.tech_kpis["duplicates"].configure(text=str(self.profile["duplicates"]))
         self.tech_kpis["nulls"].configure(text=str(self.profile["total_nulls"]))
 
-        leader = "N/D"
-        if "operator" in df.columns and metric in df.columns:
-            grouped = df.groupby("operator")[metric].mean(numeric_only=True).sort_values(ascending=False)
-            if not grouped.empty:
-                leader = str(grouped.index[0])
-        self.main_kpis["leader"].configure(text=leader)
+        prod = self.to_numeric_col(df, metric)
+        self.main_kpis["productivity"].configure(text=f"{metric}: {self.format_number(prod.mean())}")
 
-        avg_metric = "N/D"
-        if metric in df.columns and pd.api.types.is_numeric_dtype(df[metric]):
-            avg_metric = f"{metric}: {df[metric].mean():.2f}"
-        self.main_kpis["avg_metric"].configure(text=avg_metric)
+        leader = operator_summary.iloc[0]["operator"] if not operator_summary.empty else "N/D"
+        self.main_kpis["leader"].configure(text=str(leader))
 
-        shift_perf = "N/D"
-        if "shift" in df.columns and metric in df.columns:
-            grouped = df.groupby("shift")[metric].mean(numeric_only=True).sort_values(ascending=False)
-            if not grouped.empty:
-                shift_perf = str(grouped.index[0])
-        self.main_kpis["shift_perf"].configure(text=shift_perf)
+        best_bench = str(bench_summary.iloc[0][self.bench_col()]) if not bench_summary.empty else "N/D"
+        self.main_kpis["bench_perf"].configure(text=best_bench)
 
-        stability = "N/D"
-        if metric in df.columns:
-            std = df[metric].std()
-            if pd.notna(std):
-                if std < 0.5:
-                    stability = "Alta"
-                elif std < 1.5:
-                    stability = "Media"
-                else:
-                    stability = "Baja"
-        self.main_kpis["stability"].configure(text=stability)
+        self.main_kpis["efficiency"].configure(text=self.format_number(efficiency.mean()))
 
     def render_status_box(self, initial):
         df = self.get_filtered_df()
-        metric = self.metric_var.get()
+        if df is None:
+            return
+
+        metric = self.metric_label()
+        prod = self.to_numeric_col(df, metric)
+        time_s = self.to_numeric_col(df, self.time_col())
+        compliance = self.compliance_series(df)
 
         lines = [
             "Estado operativo y calidad del dataset",
@@ -667,8 +924,14 @@ class MiningView(ctk.CTkScrollableFrame):
         ]
 
         if metric in df.columns:
-            lines.append(f"- Promedio de {metric}: {df[metric].mean():.2f}")
-            lines.append(f"- Variabilidad de {metric}: {df[metric].std():.2f}")
+            lines.append(f"- Productividad promedio ({metric}): {self.format_number(prod.mean())}")
+            lines.append(f"- Variabilidad de {metric}: {self.format_number(prod.std())}")
+
+        if self.time_col() in df.columns:
+            lines.append(f"- Tiempo promedio de perforación: {self.format_number(time_s.mean())} min")
+
+        if not compliance.dropna().empty:
+            lines.append(f"- Cumplimiento promedio de perforación: {self.format_number(compliance.mean())}%")
 
         lines.append("")
         lines.append("Alertas y sugerencias:")
@@ -695,197 +958,114 @@ class MiningView(ctk.CTkScrollableFrame):
         self.status_box.configure(state="disabled")
 
     def render_preview_table(self):
-        df = self.get_filtered_df().head(15)
-
-        self.tree.delete(*self.tree.get_children())
-        cols = list(df.columns)
-        self.tree["columns"] = cols
-
-        for col in cols:
-            self.tree.heading(col, text=col)
-            self.tree.column(col, width=110, anchor="center")
-
-        for _, row in df.iterrows():
-            self.tree.insert("", "end", values=[str(v) for v in row.tolist()])
+        df = self.get_filtered_df()
+        if df is None:
+            return
+        preview = df.head(15).copy()
+        self.update_treeview(self.tree, preview, width=110, limit=15)
 
     def render_summary_table(self):
         df = self.get_filtered_df()
-        cols = [c for c in [self.time_col(), self.volume_col(), self.ton_col(), self.grade_col()] if c in df.columns]
+        if df is None:
+            return
+
+        cols = [c for c in [
+            self.time_col(),
+            self.ton_col(),
+            self.volume_col(),
+            self.total_height_col(),
+            self.real_height_col(),
+            self.grade_col()
+        ] if c in df.columns]
 
         if not cols:
             return
 
         summary = pd.DataFrame({
             "Variable": cols,
-            "Media": [df[c].mean() for c in cols],
-            "DesvStd": [df[c].std() for c in cols],
-            "Min": [df[c].min() for c in cols],
-            "Max": [df[c].max() for c in cols],
+            "Media": [self.to_numeric_col(df, c).mean() for c in cols],
+            "DesvStd": [self.to_numeric_col(df, c).std() for c in cols],
+            "P25": [self.to_numeric_col(df, c).quantile(0.25) for c in cols],
+            "P75": [self.to_numeric_col(df, c).quantile(0.75) for c in cols],
+            "Max": [self.to_numeric_col(df, c).max() for c in cols],
         })
 
-        self.summary_table.delete(*self.summary_table.get_children())
-        table_cols = list(summary.columns)
-        self.summary_table["columns"] = table_cols
-
-        for col in table_cols:
-            self.summary_table.heading(col, text=col)
-            self.summary_table.column(col, width=120, anchor="center")
-
-        for _, row in summary.iterrows():
-            vals = []
-            for v in row.tolist():
-                vals.append(f"{v:.2f}" if isinstance(v, float) else str(v))
-            self.summary_table.insert("", "end", values=vals)
+        self.update_treeview(self.summary_table, summary, width=125, limit=20)
 
     def clear_chart_frame(self, frame):
         for child in frame.winfo_children():
             child.destroy()
 
-    """ se quita porque jala ddesde chart theme ya no es necesario y de styles
-    def style_axes(self, fig, ax):
-        palette = self.get_palette()
-        fig.patch.set_facecolor(palette.get("chart_bg", palette["panel"]))
-        ax.set_facecolor(palette.get("chart_bg", palette["panel"]))
-        ax.grid(True, color=palette.get("chart_grid", palette["border"]), alpha=0.35, linestyle="--", linewidth=0.7)
-
-        for spine in ax.spines.values():
-            spine.set_color(palette["muted"])
-
-        ax.tick_params(axis="x", colors=palette["text"])
-        ax.tick_params(axis="y", colors=palette["text"])
-        ax.title.set_color(palette["text"])
-        ax.xaxis.label.set_color(palette["text"])
-        ax.yaxis.label.set_color(palette["text"])"""
-
     def render_all_charts(self):
-        self.render_scatter_chart()
-        self.render_bar_chart()
-        self.render_shift_chart()
-        self.render_hist_chart()
+        self.render_time_chart()
+        self.render_operator_chart()
+        self.render_bench_chart()
+        self.render_compliance_chart()
 
-    def render_scatter_chart(self):
-        self.clear_chart_frame(self.scatter_frame)
-        df = self.get_filtered_df()
-        x, y = self.x_var.get(), self.y_var.get()
+    def render_time_chart(self):
+        self.clear_chart_frame(self.time_frame)
+        summary = self.get_daily_summary()
+
+        if summary.empty:
+            self.render_chart_placeholder(self.time_frame, "Productividad en el tiempo")
+            return
+
         palette = self.get_palette()
-
-        if x not in df.columns or y not in df.columns:
-            self.render_chart_placeholder(self.scatter_frame, "Tiempo vs rendimiento", "Selecciona variables válidas.")
-            return
-
-        temp = pd.DataFrame({
-            x: self.to_numeric_col(df, x),
-            y: self.to_numeric_col(df, y)
-        })
-
-        if "shift" in df.columns:
-            temp["shift"] = df["shift"].astype(str)
-
-        temp = temp.dropna().head(2500)
-
-        if temp.empty or temp[x].nunique() < 2 or temp[y].nunique() < 2:
-            self.render_chart_placeholder(self.scatter_frame, "Tiempo vs rendimiento")
-            return
-
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        shift_colors = [
-            palette.get("series_1", "#4F81BD"),
-            palette.get("series_2", "#C0504D"),
-            palette.get("series_3", "#9BBB59"),
-            palette.get("series_4", "#8064A2"),
-            palette.get("series_5", "#4BACC6"),
-        ]
+        ax.plot(
+            summary["day"],
+            summary["productivity"],
+            color=palette["series_1"],
+            linewidth=1.5,
+            alpha=0.35,
+            label="Promedio diario",
+        )
 
-        used_legend = False
-        if "shift" in temp.columns and temp["shift"].nunique() > 1:
-            for idx, (shift_name, grp) in enumerate(temp.groupby("shift")):
-                ax.scatter(
-                    grp[x], grp[y],
-                    s=20,
-                    alpha=0.68,
-                    color=shift_colors[idx % len(shift_colors)],
-                    edgecolors="none",
-                    label=str(shift_name),
-                )
-            used_legend = True
-        else:
-            ax.scatter(
-                temp[x], temp[y],
-                s=20,
-                alpha=0.70,
-                color=palette["series_1"],
-                edgecolors="none",
+        if "rolling_productivity" in summary.columns:
+            ax.plot(
+                summary["day"],
+                summary["rolling_productivity"],
+                color=palette["series_5"],
+                linewidth=2.6,
+                alpha=0.95,
+                label="Media móvil 7",
             )
 
-        # Línea de tendencia
-        coef = np.polyfit(temp[x], temp[y], 1)
-        x_line = np.linspace(temp[x].min(), temp[x].max(), 100)
-        y_line = coef[0] * x_line + coef[1]
-        ax.plot(
-            x_line,
-            y_line,
-            color=palette["series_5"],
-            linewidth=2.2,
-            alpha=0.95,
-        )
+        ax.set_title(f"Evolución de {self.metric_label()}")
+        ax.set_xlabel("Fecha")
+        ax.set_ylabel(self.metric_label())
 
-        corr = temp[x].corr(temp[y])
-        ax.set_title(f"{x} vs {y}")
-        ax.set_xlabel(x)
-        ax.set_ylabel(y)
+        for label in ax.get_xticklabels():
+            label.set_rotation(35)
+            label.set_ha("right")
 
-        ax.text(
-            0.98, 0.96,
-            f"r = {corr:.3f}",
-            ha="right", va="top",
-            fontsize=9,
-            color=palette["muted"],
-            transform=ax.transAxes,
-        )
+        ax.legend(frameon=False, fontsize=8)
 
-        if used_legend:
-            ax.legend(loc="best", frameon=False, fontsize=8)
-
-        canvas = FigureCanvasTkAgg(fig, master=self.scatter_frame)
+        canvas = FigureCanvasTkAgg(fig, master=self.time_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    def render_bar_chart(self):
-        self.clear_chart_frame(self.bar_frame)
-        df = self.get_filtered_df()
-        metric = self.metric_var.get()
+    def render_operator_chart(self):
+        self.clear_chart_frame(self.operator_frame)
+        summary = self.get_operator_summary()
+
+        if summary.empty:
+            self.render_chart_placeholder(self.operator_frame, "Ranking de operadores")
+            return
+
         palette = self.get_palette()
-
-        if "operator" not in df.columns or metric not in df.columns:
-            self.render_chart_placeholder(self.bar_frame, "Top operadores")
-            return
-
-        temp = df.copy()
-        temp[metric] = self.to_numeric_col(temp, metric)
-        temp = temp.dropna(subset=["operator", metric])
-
-        if temp.empty:
-            self.render_chart_placeholder(self.bar_frame, "Top operadores")
-            return
-
-        grouped = (
-            temp.groupby("operator")[metric]
-            .mean()
-            .sort_values(ascending=False)
-            .head(self.safe_top_n())
-            .sort_values(ascending=True)
-        )
+        top = summary.head(self.safe_top_n()).sort_values("productivity", ascending=True)
 
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
         bars = ax.barh(
-            grouped.index.astype(str),
-            grouped.values,
+            top["operator"].astype(str),
+            top["productivity"],
             color=palette["series_2"],
             edgecolor=palette["accent"],
             alpha=0.88,
@@ -894,14 +1074,14 @@ class MiningView(ctk.CTkScrollableFrame):
         if len(bars) > 0:
             bars[-1].set_color(palette["series_5"])
 
-        ax.set_title(f"Top {self.safe_top_n()} operadores por {metric}")
-        ax.set_xlabel(metric)
+        ax.set_title(f"Top {len(top)} operadores por {self.metric_label()}")
+        ax.set_xlabel(self.metric_label())
         ax.set_ylabel("Operador")
 
-        max_val = grouped.max() if len(grouped) else 0
+        max_val = top["productivity"].max() if len(top) else 0
         offset = max_val * 0.02 if max_val else 0.1
 
-        for bar, value in zip(bars, grouped.values):
+        for bar, value in zip(bars, top["productivity"].values):
             ax.text(
                 value + offset,
                 bar.get_y() + bar.get_height() / 2,
@@ -911,144 +1091,182 @@ class MiningView(ctk.CTkScrollableFrame):
                 color=palette["text"],
             )
 
-        canvas = FigureCanvasTkAgg(fig, master=self.bar_frame)
+        canvas = FigureCanvasTkAgg(fig, master=self.operator_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    def render_shift_chart(self):
-        self.clear_chart_frame(self.shift_frame)
-        df = self.get_filtered_df()
-        metric = self.metric_var.get()
+    def render_bench_chart(self):
+        self.clear_chart_frame(self.bench_frame)
+        summary = self.get_bench_summary()
+
+        if summary.empty:
+            self.render_chart_placeholder(self.bench_frame, "Desempeño por banco")
+            return
+
         palette = self.get_palette()
+        focus = summary.head(5).copy()
+        if len(summary) > 8:
+            focus = pd.concat([summary.head(4), summary.tail(4)], axis=0)
 
-        if "shift" not in df.columns or metric not in df.columns:
-            self.render_chart_placeholder(self.shift_frame, "Comparación por turno")
-            return
+        focus = focus.drop_duplicates(subset=[self.bench_col()]).sort_values("productivity", ascending=True)
 
-        temp = df.copy()
-        temp[metric] = self.to_numeric_col(temp, metric)
-        temp["shift"] = temp["shift"].astype(str)
-        temp = temp.dropna(subset=["shift", metric])
+        fig = create_figure(palette, figsize=(6.2, 4.0), dpi=100)
+        ax = fig.add_subplot(111)
+        style_axes(fig, ax, palette)
 
-        if temp.empty:
-            self.render_chart_placeholder(self.shift_frame, "Comparación por turno")
-            return
+        colors = [palette["series_3"]] * len(focus)
+        if len(colors) > 0:
+            colors[-1] = palette["series_5"]
+            colors[0] = palette["series_2"]
 
-        order = (
-            temp.groupby("shift")[metric]
-            .mean()
-            .sort_values(ascending=False)
-            .index.tolist()
+        bars = ax.barh(
+            focus[self.bench_col()].astype(str),
+            focus["productivity"],
+            color=colors,
+            edgecolor=palette["accent"],
+            alpha=0.88,
         )
 
-        series_data = [
-            temp.loc[temp["shift"] == shift_name, metric].values
-            for shift_name in order
-        ]
+        ax.set_title(f"Bancos destacados por {self.metric_label()}")
+        ax.set_xlabel(self.metric_label())
+        ax.set_ylabel("Banco")
 
+        max_val = float(focus["productivity"].max()) if len(focus) else 0.0
+        ax.set_xlim(0, max_val * 1.18 if max_val > 0 else 1)
+
+        inside_offset = max_val * 0.02 if max_val > 0 else 0.1
+        outside_offset = max_val * 0.015 if max_val > 0 else 0.1
+
+        for bar, value, rec in zip(bars, focus["productivity"].values, focus["records"].values):
+            label = f"{value:.1f} | n={int(rec)}"
+            y = bar.get_y() + bar.get_height() / 2
+
+            # Si la barra es suficientemente larga, mete el texto dentro
+            if value >= max_val * 0.22:
+                ax.text(
+                    value - inside_offset,
+                    y,
+                    label,
+                    va="center",
+                    ha="right",
+                    fontsize=8.0,
+                    color=palette["panel"],
+                    fontweight="bold",
+                )
+            else:
+                ax.text(
+                    value + outside_offset,
+                    y,
+                    label,
+                    va="center",
+                    ha="left",
+                    fontsize=8.0,
+                    color=palette["text"],
+                )
+
+        fig.tight_layout(pad=1.4)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.bench_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def render_compliance_chart(self):
+        self.clear_chart_frame(self.compliance_frame)
+        summary = self.get_compliance_daily()
+
+        if summary.empty:
+            self.render_chart_placeholder(self.compliance_frame, "Cumplimiento de perforación")
+            return
+
+        palette = self.get_palette()
         fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
-        bp = ax.boxplot(
-            series_data,
-            labels=order,
-            patch_artist=True,
-            widths=0.58,
+        ax.plot(
+            summary["day"],
+            summary["compliance"],
+            color=palette["series_3"],
+            linewidth=1.4,
+            alpha=0.30,
+            label="Promedio diario",
         )
 
-        box_colors = [
-            palette["series_3"],
-            palette["series_4"],
-            palette["series_2"],
-            palette["series_1"],
-            palette["series_5"],
-        ]
+        if "rolling_compliance" in summary.columns:
+            ax.plot(
+                summary["day"],
+                summary["rolling_compliance"],
+                color=palette["series_5"],
+                linewidth=2.4,
+                alpha=0.95,
+                label="Media móvil 7",
+            )
 
-        for i, box in enumerate(bp["boxes"]):
-            box.set_facecolor(box_colors[i % len(box_colors)])
-            box.set_alpha(0.55)
-            box.set_edgecolor(palette["accent"])
-
-        for median in bp["medians"]:
-            median.set_color(palette["text"])
-            median.set_linewidth(1.5)
-
-        for whisker in bp["whiskers"]:
-            whisker.set_color(palette["muted"])
-
-        for cap in bp["caps"]:
-            cap.set_color(palette["muted"])
-
-        ax.set_title(f"Distribución por turno: {metric}")
-        ax.set_xlabel("Turno")
-        ax.set_ylabel(metric)
-
-        canvas = FigureCanvasTkAgg(fig, master=self.shift_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
-        
-        
-    def render_hist_chart(self):
-        self.clear_chart_frame(self.hist_frame)
-        df = self.get_filtered_df()
-        metric = self.metric_var.get()
-        palette = self.get_palette()
-
-        if metric not in df.columns:
-            self.render_chart_placeholder(self.hist_frame, "Distribución del indicador")
-            return
-
-        data = self.to_numeric_col(df, metric).dropna()
-
-        if data.empty:
-            self.render_chart_placeholder(self.hist_frame, "Distribución del indicador")
-            return
-
-        fig = create_figure(palette, figsize=(6.0, 3.9), dpi=100)
-        ax = fig.add_subplot(111)
-        style_axes(fig, ax, palette)
-
-        ax.hist(
-            data,
-            bins=28,
-            color=palette["series_1"],
-            alpha=0.82,
-            edgecolor=palette["chart_axis"]
+        ax.axhline(
+            100,
+            color=palette["series_2"],
+            linestyle="--",
+            linewidth=1.2,
+            alpha=0.85,
+            label="Objetivo 100%",
         )
 
-        mean_val = data.mean()
-        median_val = data.median()
+        ax.set_title("Cumplimiento de perforación (%)")
+        ax.set_xlabel("Fecha")
+        ax.set_ylabel("% cumplimiento")
 
-        ax.axvline(mean_val, color=palette["series_5"], linewidth=2.0, linestyle="-", label=f"Media {mean_val:.2f}")
-        ax.axvline(median_val, color=palette["series_2"], linewidth=1.8, linestyle="--", label=f"Mediana {median_val:.2f}")
+        for label in ax.get_xticklabels():
+            label.set_rotation(35)
+            label.set_ha("right")
 
-        ax.set_title(f"Distribución de {metric}")
-        ax.set_xlabel(metric)
-        ax.set_ylabel("Frecuencia")
         ax.legend(frameon=False, fontsize=8)
 
-        canvas = FigureCanvasTkAgg(fig, master=self.hist_frame)
+        canvas = FigureCanvasTkAgg(fig, master=self.compliance_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def render_report_main(self):
         df = self.get_filtered_df()
-        metric = self.metric_var.get()
+        if df is None or df.empty:
+            return
+
+        metric = self.metric_label()
+        operator_summary = self.get_operator_summary(df)
+        bench_summary = self.get_bench_summary(df)
+        daily_summary = self.get_daily_summary(df)
+        compliance_daily = self.get_compliance_daily(df)
+        loss_summary = self.get_loss_summary(df)
+
         lines = []
 
-        if "operator" in df.columns and metric in df.columns:
-            grouped = df.groupby("operator")[metric].mean(numeric_only=True).sort_values(ascending=False)
-            if not grouped.empty:
-                lines.append(f"Resultado principal: el operador con mejor promedio de {metric} es {grouped.index[0]}.")
+        prod = self.to_numeric_col(df, metric)
+        if not prod.dropna().empty:
+            lines.append(f"Resultado principal: la productividad promedio de {metric} es {prod.mean():.2f}.")
 
-        if "shift" in df.columns and metric in df.columns:
-            grouped = df.groupby("shift")[metric].mean(numeric_only=True).sort_values(ascending=False)
-            if not grouped.empty:
-                lines.append(f"Turno dominante: {grouped.index[0]} lidera el indicador {metric}.")
+        if not operator_summary.empty:
+            leader = operator_summary.iloc[0]
+            lines.append(f"Operador benchmark: {leader['operator']} presenta el mejor promedio en {metric} ({leader['productivity']:.2f}).")
 
-        if metric in df.columns:
-            lines.append(f"Nivel operativo: el promedio de {metric} es {df[metric].mean():.2f}.")
+        if not bench_summary.empty:
+            best_bench = bench_summary.iloc[0]
+            lines.append(f"Banco destacado: {best_bench[self.bench_col()]} lidera el rendimiento con {best_bench['productivity']:.2f}.")
+
+        if not daily_summary.empty and len(daily_summary) >= 10:
+            recent = daily_summary["productivity"].tail(5).mean()
+            previous = daily_summary["productivity"].iloc[-10:-5].mean()
+            delta = recent - previous if pd.notna(recent) and pd.notna(previous) else np.nan
+            if pd.notna(delta):
+                trend = "mejorando" if delta > 0 else "cayendo" if delta < 0 else "estable"
+                lines.append(f"Señal reciente: la productividad está {trend} ({delta:+.2f} frente al bloque previo).")
+
+        if not compliance_daily.empty:
+            latest_comp = compliance_daily["compliance"].tail(7).mean()
+            if pd.notna(latest_comp):
+                lines.append(f"Cumplimiento reciente: el promedio de perforación ejecutada vs plan está en {latest_comp:.2f}%.")
+
+        if not loss_summary.empty:
+            worst = loss_summary.sort_values("Relacion", ascending=True).iloc[0]
+            lines.append(f"Principal penalizador: {worst['Factor']} muestra la relación más negativa con la productividad ({worst['Relacion']:.3f}).")
 
         self.report_main_box.configure(state="normal")
         self.report_main_box.delete("1.0", tk.END)
@@ -1059,45 +1277,25 @@ class MiningView(ctk.CTkScrollableFrame):
         for child in self.report_chart_frame.winfo_children():
             child.destroy()
 
-        df = self.get_filtered_df()
-        metric = self.metric_var.get()
+        summary = self.get_operator_summary()
+        if summary.empty:
+            self.render_chart_placeholder(
+                self.report_chart_frame,
+                "Visual principal de soporte",
+                "No hay datos suficientes para construir el reporte."
+            )
+            return
+
         palette = self.get_palette()
-
-        if "operator" not in df.columns or metric not in df.columns:
-            self.render_chart_placeholder(
-                self.report_chart_frame,
-                "Visual principal de soporte",
-                "No hay datos suficientes para construir el reporte."
-            )
-            return
-
-        temp = df.copy()
-        temp[metric] = self.to_numeric_col(temp, metric)
-        temp = temp.dropna(subset=["operator", metric])
-
-        if temp.empty:
-            self.render_chart_placeholder(
-                self.report_chart_frame,
-                "Visual principal de soporte",
-                "No hay datos suficientes para construir el reporte."
-            )
-            return
-
-        grouped = (
-            temp.groupby("operator")[metric]
-            .mean()
-            .sort_values(ascending=False)
-            .head(self.safe_top_n())
-            .sort_values(ascending=True)
-        )
+        top = summary.head(self.safe_top_n()).sort_values("productivity", ascending=True)
 
         fig = create_figure(palette, figsize=(7.2, 4.2), dpi=100)
         ax = fig.add_subplot(111)
         style_axes(fig, ax, palette)
 
         bars = ax.barh(
-            grouped.index.astype(str),
-            grouped.values,
+            top["operator"].astype(str),
+            top["productivity"],
             color=palette["series_2"],
             edgecolor=palette["accent"],
             alpha=0.90,
@@ -1106,14 +1304,14 @@ class MiningView(ctk.CTkScrollableFrame):
         if len(bars) > 0:
             bars[-1].set_color(palette["series_5"])
 
-        ax.set_title(f"Operadores líderes por {metric}")
-        ax.set_xlabel(metric)
+        ax.set_title(f"Operadores benchmark por {self.metric_label()}")
+        ax.set_xlabel(self.metric_label())
         ax.set_ylabel("Operador")
 
-        max_val = grouped.max() if len(grouped) else 0
+        max_val = top["productivity"].max() if len(top) else 0
         offset = max_val * 0.02 if max_val else 0.1
 
-        for bar, value in zip(bars, grouped.values):
+        for bar, value in zip(bars, top["productivity"].values):
             ax.text(
                 value + offset,
                 bar.get_y() + bar.get_height() / 2,
@@ -1126,41 +1324,67 @@ class MiningView(ctk.CTkScrollableFrame):
         canvas = FigureCanvasTkAgg(fig, master=self.report_chart_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
-    
+
     def render_conclusions(self, initial):
         df = self.get_filtered_df()
-        metric = self.metric_var.get()
-        x, y = self.x_var.get(), self.y_var.get()
+        if df is None or df.empty:
+            return
+
+        metric = self.metric_label()
+        operator_summary = self.get_operator_summary(df)
+        bench_summary = self.get_bench_summary(df)
+        compliance_daily = self.get_compliance_daily(df)
+        loss_summary = self.get_loss_summary(df)
 
         lines = []
 
-        if metric in df.columns:
-            lines.append(f"Hallazgo principal: el promedio actual de {metric} es {df[metric].mean():.2f}.")
-            lines.append(f"Variabilidad del indicador: {df[metric].std():.2f}.")
+        prod = self.to_numeric_col(df, metric)
+        eff = self.efficiency_series(df)
+        compliance = self.compliance_series(df)
 
-        if "operator" in df.columns and metric in df.columns:
-            grouped = df.groupby("operator")[metric].mean(numeric_only=True).sort_values(ascending=False)
-            if not grouped.empty:
-                lines.append(f"Soporte operativo: el operador más fuerte en {metric} es {grouped.index[0]}.")
+        if not prod.dropna().empty:
+            lines.append(f"- La productividad promedio actual de {metric} es {prod.mean():.2f}.")
+            lines.append(f"- La dispersión de {metric} es {prod.std():.2f}.")
 
-        if {x, y}.issubset(df.columns):
-            corr = df[[x, y]].corr(numeric_only=True).iloc[0, 1]
-            if abs(corr) >= 0.7:
-                strength = "fuerte"
-            elif abs(corr) >= 0.4:
-                strength = "moderada"
-            else:
-                strength = "débil"
-            lines.append(f"Relación operativa: la asociación entre {x} y {y} es {strength} ({corr:.3f}).")
+        if not eff.dropna().empty:
+            lines.append(f"- La eficiencia operativa promedio ({metric}/min) es {eff.mean():.3f}.")
+
+        if not compliance.dropna().empty:
+            lines.append(f"- El cumplimiento promedio de perforación es {compliance.mean():.2f}%.")
+
+        if not operator_summary.empty:
+            lines.append(f"- El operador benchmark actual es {operator_summary.iloc[0]['operator']}.")
+
+        if not bench_summary.empty:
+            lines.append(f"- El banco con mejor rendimiento actual es {bench_summary.iloc[0][self.bench_col()]}.")
+            lines.append(f"- El banco más rezagado dentro del grupo analizado es {bench_summary.iloc[-1][self.bench_col()]}.")
+
+        if not compliance_daily.empty and len(compliance_daily) >= 7:
+            recent_comp = compliance_daily["compliance"].tail(7).mean()
+            lines.append(f"- El cumplimiento reciente de perforación se ubica en {recent_comp:.2f}%.")
+
+        if not loss_summary.empty:
+            for _, row in loss_summary.iterrows():
+                lines.append(f"- {row['Factor']}: relación con productividad de {row['Relacion']:.3f} ({row['Lectura']}).")
 
         if self.profile and not self.profile["missing_df"].empty:
             top_missing = self.profile["missing_df"].iloc[0]
-            lines.append(f"Alerta de calidad: la columna {top_missing['column']} concentra {int(top_missing['missing'])} valores faltantes.")
+            lines.append(f"- La principal alerta de calidad está en {top_missing['column']} con {int(top_missing['missing'])} faltantes.")
 
         if initial:
-            lines.append("Acción sugerida: revisar calidad del dataset y decidir si conviene aplicar limpieza adicional antes de evaluar productividad.")
+            lines.append("- Acción sugerida: validar primero la calidad del dataset antes de tomar comparaciones definitivas.")
         else:
-            lines.append("Acción sugerida: interpretar estos resultados considerando filtros y limpieza, y revisar operadores/turnos con mayor oportunidad de mejora.")
+            action = "- Acción sugerida: "
+            if not operator_summary.empty and not bench_summary.empty:
+                action += (
+                    f"usar como referencia a {operator_summary.iloc[0]['operator']} y revisar condiciones operativas "
+                    f"del banco {bench_summary.iloc[-1][self.bench_col()]} si mantiene menor productividad."
+                )
+            elif not operator_summary.empty:
+                action += f"tomar como referencia operativa a {operator_summary.iloc[0]['operator']}."
+            else:
+                action += "revisar productividad, cumplimiento y bancos para ubicar el principal desvío."
+            lines.append(action)
 
         self.conclusion_box.configure(state="normal")
         self.conclusion_box.delete("1.0", tk.END)

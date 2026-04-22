@@ -132,7 +132,7 @@ class Proyect2CodeaUNI(ctk.CTk):
             ("Autor", "  Brayan Churata"),
             ("Programa", "  CODEa UNI"),
             ("Rol", "  Analítica minera"),
-            ("Versión", "  2.73"),
+            ("Versión", "  3.11.1"),
             ("Correo", "  bchurata3@mail.com"),
             ("Contacto", "  +51 927 215 240"),
         ]
